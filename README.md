@@ -15,12 +15,12 @@ O **AudioLivro Pro** é uma aplicação web leve e intuitiva projetada para tran
 # Tecnologias & Arquitetura (Full Stack)
 O projeto utiliza uma arquitetura separada entre Cliente e Servidor para garantir performance e persistência robusta:
 
-* **Frontend: HTML5, CSS3 (Flexbox/Grid), JavaScript ES6+.
-* **APIs de Navegador: PDF.js (extração de texto) e Web Speech API (síntese de voz).
-* **Backend (Motor): FastAPI (Python) — Framework moderno e de alta performance para a construção da API.
-* **Validação de Dados: Pydantic — Garante que o contrato de dados entre o JS e o Python seja respeitado (evitando erros 422).
-* **Banco de Dados: MySQL — Persistência relacional para salvar o progresso de leitura de múltiplos livros.
-* **Comunicação: Fetch API com suporte a CORS para integração entre origens.
+* Frontend: HTML5, CSS3 (Flexbox/Grid), JavaScript ES6+.
+* APIs de Navegador: PDF.js (extração de texto) e Web Speech API (síntese de voz).
+* Backend (Motor): FastAPI (Python) — Framework moderno e de alta performance para a construção da API.
+* Validação de Dados: Pydantic — Garante que o contrato de dados entre o JS e o Python seja respeitado (evitando erros 422).
+* Banco de Dados: MySQL — Persistência relacional para salvar o progresso de leitura de múltiplos livros.
+* Comunicação: Fetch API com suporte a CORS para integração entre origens.
 
 # Fluxo de Persistência Híbrida
 Diferente de leitores comuns, o AudioLivro Pro trabalha com duas camadas de salvamento:
