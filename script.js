@@ -140,6 +140,7 @@ function highlight() {
 
 function saveProgress() {
     if (!state.title) return;
+
     const data = {
         title: state.title,
         currentIdx: state.currentIdx,
@@ -148,6 +149,8 @@ function saveProgress() {
         date: Date.now()
     };
     localStorage.setItem(`${STORAGE_KEY}_${state.title}`, JSON.stringify(data));
+
+    salvarNoMySQL(state.title, state.currentIdx); // salva no MySQL também
 }
 
 function loadRecents() {
@@ -255,4 +258,32 @@ function handleProgClick(e) {
     state.currentIdx = Math.floor(pct * state.sentences.length);
     highlight();
     if (state.playing) speak();
+}
+
+//CONEXAO COM O BACKEND PARA SALVAR PROGRESSO NO MYSQL (EXEMPLO SIMPLIFICADO, REQUER BACKEND CONFIGURADO)
+async function salvarNoMySQL(idLivro, indice) {
+    console.log('DADOS ENVIADOS:', {
+        id_Livro: idLivro,
+        tipo_id: typeof idLivro,
+        indice_frase: indice,
+        tipo_indice: typeof indice
+    });
+
+    try {
+        const url = 'http://127.0.0.1:8000/salvar';
+
+        await fetch(url, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                id_Livro: idLivro,
+                indice_frase: indice
+             })
+        });
+        console.log("Salvo no MySQL");
+    } catch (error) {
+        console.warn('Servidor python offline. Progresso salvo apenas no navegador');
+    }
 }
