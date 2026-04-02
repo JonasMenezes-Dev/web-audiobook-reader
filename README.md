@@ -12,14 +12,34 @@ O **AudioLivro Pro** é uma aplicação web leve e intuitiva projetada para tran
 * **Interface Imersiva:** Design focado na leitura com Dark Mode e destaque da frase atual.
 * **Acessibilidade:** Atalhos e navegação simplificada por sentenças.
 
-##  Tecnologias Utilizadas
+# Tecnologias & Arquitetura (Full Stack)
+O projeto utiliza uma arquitetura separada entre Cliente e Servidor para garantir performance e persistência robusta:
 
-* **HTML5 / CSS3** (Flexbox & Grid)
-* **JavaScript** (ES6+)
-* **PDF.js** (Renderização e extração de texto)
-* **Web Speech API** (Síntese de voz nativa)
+* **Frontend: HTML5, CSS3 (Flexbox/Grid), JavaScript ES6+.
+* **APIs de Navegador: PDF.js (extração de texto) e Web Speech API (síntese de voz).
+* **Backend (Motor): FastAPI (Python) — Framework moderno e de alta performance para a construção da API.
+* **Validação de Dados: Pydantic — Garante que o contrato de dados entre o JS e o Python seja respeitado (evitando erros 422).
+* **Banco de Dados: MySQL — Persistência relacional para salvar o progresso de leitura de múltiplos livros.
+* **Comunicação: Fetch API com suporte a CORS para integração entre origens.
 
-##  Como usar
+# Fluxo de Persistência Híbrida
+Diferente de leitores comuns, o AudioLivro Pro trabalha com duas camadas de salvamento:
+
+Local: Utiliza LocalStorage para acesso imediato no navegador.
+
+Remota (SQL): Envia via POST o progresso exato (ID do livro e índice da frase) para o servidor Python, que armazena as informações no MySQL. Isso permite que o usuário nunca perca sua posição na leitura, mesmo trocando de dispositivo (em ambiente deployado).
+
+
+# Como Rodar o Backend (Desenvolvimento)
+Para habilitar o salvamento em MySQL no seu ambiente local:
+
+1. Acesse a pasta /backend.
+2. Crie um ambiente virtual: python -m venv venv.
+3. Instale as dependências: pip install -r requirements.txt.
+4. Configure suas credenciais do MySQL no arquivo main.py.
+5. Inicie o servidor: uvicorn main:app --reload.
+
+# Como usar
 
 1. Faça o upload do seu arquivo PDF ou TXT.
 2. Selecione sua voz preferida no menu superior (Dica: No **Microsoft Edge**, use as vozes 'Natural').
