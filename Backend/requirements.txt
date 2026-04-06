@@ -1,0 +1,5 @@
+fastapi
+uvicorn[standard]
+pypdf
+mysql-connector-python
+

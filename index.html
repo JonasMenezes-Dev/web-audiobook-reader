@@ -16,19 +16,18 @@
 
     <div id="screen-import" class="screen">
         <div class="import-wrap">
-            <h1 style="font-family: var(--font-read); margin-bottom: 1rem;">AudioLivro Pro</h1>
-            <p style="color: var(--text-muted); margin-bottom: 2rem;">Transforme PDFs e textos em audiolivros imersivos.
+<h1>AudioLivro Pro</h1>
+<p>Transforme PDFs e textos em audiolivros imersivos.
             </p>
 
             <div id="drop-zone" class="drop-zone" onclick="document.getElementById('file-input').click()">
-                <span style="font-size: 3rem;">📄</span>
-                <p style="margin-top:10px;">Toque ou arraste seu arquivo aqui</p>
+<span>📄</span>
+<p>Toque ou arraste seu arquivo aqui</p>
                 <input type="file" id="file-input" accept=".pdf,.txt" hidden>
             </div>
 
-            <div id="saved-section" style="margin-top: 2rem; text-align: left;">
-                <p
-                    style="font-size: 0.7rem; color: var(--accent); text-transform: uppercase; letter-spacing: 2px; margin-bottom: 10px;">
+            <div id="saved-section">
+                <p>
                     Arquivos Recentes</p>
                 <div id="book-list"></div>
             </div>
@@ -36,14 +35,10 @@
     </div>
 
     <div id="screen-reader" class="screen" hidden>
-        <header
-            style="padding: 1rem; border-bottom: 1px solid var(--border); display: flex; align-items: center; background: var(--bg-surface);">
-            <button onclick="location.reload()"
-                style="background:none; border:none; color:var(--text); cursor:pointer; font-weight: bold;">✕
+<header>
+            <button onclick="location.reload()">✕
                 SAIR</button>
-            <div id="r-title"
-                style="flex:1; text-align:center; font-weight:500; font-size: 0.85rem; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; padding: 0 15px; color: var(--accent);">
-                —</div>
+<div id="r-title">—</div>
         </header>
 
         <div id="reading-area" class="reading-area">
@@ -52,21 +47,19 @@
 
         <footer class="player">
             <div class="prog-track" id="prog-track" onclick="handleProgClick(event)">
-                <div class="prog-fill" id="prog-fill" style="width:0%"></div>
+<div class="prog-fill" id="prog-fill"></div>
             </div>
             <div class="player-row">
-                <span id="pos-txt"
-                    style="font-family:'JetBrains Mono', monospace; font-size: 0.75rem; color:var(--text-muted); width: 80px;">0
+<span id="pos-txt">0
                     / 0</span>
-                <div style="display:flex; align-items:center; gap: 20px;">
+<div>
                     <button class="cbtn" onclick="prev()">⏮</button>
                     <button class="pbtn" id="btn-play" onclick="togglePlay()">
-                        <span id="play-icon" style="font-size: 1.5rem;">▶</span>
+<span id="play-icon">▶</span>
                     </button>
                     <button class="cbtn" onclick="next()">⏭</button>
                 </div>
-                <button onclick="cycleSpeed()" id="btn-spd"
-                    style="background:var(--bg-elevated); border:1px solid var(--border); color:var(--text); padding:6px 12px; border-radius:4px; font-size:0.75rem; width: 60px; cursor: pointer;">1.0x</button>
+                <button onclick="cycleSpeed()" id="btn-spd">1.0x</button>
             </div>
         </footer>
     </div>

@@ -19,6 +19,7 @@ let voices = [];
 function loadVoices() {
     voices = window.speechSynthesis.getVoices();
 }
+
 window.speechSynthesis.onvoiceschanged = loadVoices;
 loadVoices();
 
@@ -46,27 +47,43 @@ document.getElementById('file-input').onchange = e => {
     }
 };
 
+
 async function loadPDF(file) {
+    const formData = new FormData();
+    formData.append('file', file);
     try {
-        const arrayBuffer = await file.arrayBuffer();
-        const loadingTask = pdfjsLib.getDocument({ data: arrayBuffer });
-        const pdf = await loadingTask.promise;
-
-        let fullText = "";
-        for (let i = 1; i <= pdf.numPages; i++) {
-            const page = await pdf.getPage(i);
-            const content = await page.getTextContent();
-            // O join com espaço evita que palavras no fim da linha fiquem grudadas
-            fullText += content.items.map(item => item.str).join(" ") + " ";
+        const response = await fetch('http://127.0.0.1:8000/upload-pdf/', {
+            method: 'POST',
+            body: formData
+        });
+        const data = await response.json();
+        if (data.error) {
+            throw new Error(data.error);
         }
-
-        if (fullText.trim().length < 5) throw new Error("PDF sem texto extraível.");
-        processText(fullText, file.name);
+        // Backend cleaned text and sentences
+        processText(data.texto_limpo, data.filename, data.sentences);
     } catch (err) {
-        console.error(err);
-        alert("Erro ao ler o PDF: " + err.message);
+        console.log('Backend failed, fallback to local PDF.js:', err.message);
+        // Fallback local PDF.js
+        try {
+            const arrayBuffer = await file.arrayBuffer();
+            const loadingTask = pdfjsLib.getDocument({ data: arrayBuffer });
+            const pdf = await loadingTask.promise;
+            let fullText = "";
+            for (let i = 1; i <= pdf.numPages; i++) {
+                const page = await pdf.getPage(i);
+                const content = await page.getTextContent();
+                fullText += content.items.map(item => item.str).join(" ") + " ";
+            }
+            if (fullText.trim().length < 5) throw new Error("PDF sem texto extraível.");
+            processText(fullText, file.name);
+        } catch (localErr) {
+            console.error('Local PDF.js failed:', localErr);
+            alert("Erro ao ler o PDF: " + localErr.message);
+        }
     }
 }
+
 
 function loadTXT(file) {
     const reader = new FileReader();
@@ -75,16 +92,22 @@ function loadTXT(file) {
     reader.readAsText(file);
 }
 
-function processText(text, title) {
+
+function processText(text, title, sentences) {
     state.title = title;
-    // Limpeza básica de espaços e quebras de linha antes do split
-    const cleanText = text.replace(/\s+/g, ' ');
-    state.sentences = cleanText.split(/(?<=[.!?])\s+/).filter(s => s.trim().length > 2);
+    if (sentences && Array.isArray(sentences)) {
+        state.sentences = sentences.filter(s => s.trim().length > 2);
+    } else {
+        // Limpeza básica de espaços e quebras de linha antes do split
+        const cleanText = text.replace(/\s+/g, ' ');
+        state.sentences = cleanText.split(/(?<=[.!?])\s+/).filter(s => s.trim().length > 2);
+    }
 
     if (state.sentences.length === 0) {
         alert('Não foi possível identificar frases no arquivo.');
         return;
     }
+
 
     // Tentar recuperar progresso salvo para este título específico
     const saved = localStorage.getItem(`${STORAGE_KEY}_${title}`);
@@ -97,6 +120,7 @@ function processText(text, title) {
         state.rate = 1.0;
     }
 
+
     document.getElementById('r-title').textContent = title;
     document.getElementById('btn-spd').textContent = state.rate.toFixed(1) + 'x';
 
@@ -107,12 +131,14 @@ function processText(text, title) {
     highlight();
 }
 
+
 function renderText() {
     const container = document.getElementById('reading-inner');
     container.innerHTML = state.sentences.map((s, i) =>
         `<span class="sent" id="s-${i}" onclick="goTo(${i})">${s}</span>`
     ).join(" ");
 }
+
 
 function goTo(i) {
     state.currentIdx = i;
@@ -121,6 +147,7 @@ function goTo(i) {
     highlight();
     if (wasPlaying) speak();
 }
+
 
 function highlight() {
     document.querySelectorAll('.sent').forEach(el => el.classList.remove('reading'));
@@ -138,6 +165,7 @@ function highlight() {
     saveProgress();
 }
 
+
 function saveProgress() {
     if (!state.title) return;
 
@@ -153,6 +181,7 @@ function saveProgress() {
     salvarNoMySQL(state.title, state.currentIdx); // salva no MySQL também
 }
 
+
 function loadRecents() {
     const list = document.getElementById('book-list');
     const items = [];
@@ -167,21 +196,18 @@ function loadRecents() {
     items.sort((a, b) => b.date - a.date);
 
     if (items.length === 0) {
-        list.innerHTML = `<p style="color:var(--text-muted); font-size:0.8rem;">Nenhum arquivo recente.</p>`;
+        list.innerHTML = `<p class="no-recents">Nenhum arquivo recente.</p>`;
         return;
     }
 
     list.innerHTML = items.slice(0, 5).map(item => `
             <div class="recent-item" onclick="alert('Como o arquivo original não fica guardado no navegador por segurança, por favor selecione o arquivo ${item.title} novamente para continuar de onde parou.')">
-                <div style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:70%;">
-                    ${item.title}
-                </div>
-                <div style="font-size:0.7rem; color:var(--accent);">
-                    ${Math.round((item.currentIdx / item.total) * 100)}% concluído
-                </div>
+                <div>${item.title}</div>
+                <div>${Math.round((item.currentIdx / item.total) * 100)}% concluído</div>
             </div>
         `).join('');
 }
+
 
 function togglePlay() {
     if (state.playing) {
@@ -280,7 +306,7 @@ async function salvarNoMySQL(idLivro, indice) {
             body: JSON.stringify({
                 id_Livro: idLivro,
                 indice_frase: indice
-             })
+            })
         });
         console.log("Salvo no MySQL");
     } catch (error) {

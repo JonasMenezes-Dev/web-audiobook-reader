@@ -1,0 +1,29 @@
+# --- Python & Ambientes Virtuais ---
+venv/
+.venv/
+env/
+ENV/
+bin/
+lib/
+include/
+share/
+*.pyc
+__pycache__/
+.pytest_cache/
+
+# --- Banco de Dados & Configurações Sensíveis ---
+.env
+*.log
+*.sql.gz
+# Ignora arquivos de sessão do banco de dados (como o que apareceu no seu git status)
+*.session.sql
+
+# --- Frontend & Editores ---
+.vscode/
+.idea/
+.DS_Store
+node_modules/
+
+# --- Arquivos de Sistema ---
+Thumbs.db
+desktop.ini
