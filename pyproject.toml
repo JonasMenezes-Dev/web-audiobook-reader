@@ -1,0 +1,17 @@
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "SIM", "UP"]
+# B008: o FastAPI EXIGE chamadas como `File()` / `Depends()` em defaults de
+#       parâmetros de rota. É um falso positivo por design do framework.
+# BLE001: as rotas capturam Exception de propósito para devolver
+#         {"status": "erro", "detalhes": ...} em JSON ao frontend, em vez de
+#         derrubar a requisição com um traceback 500.
+ignore = ["B008", "BLE001"]

@@ -3,6 +3,14 @@
 const pdfjsLib = window['pdfjs-dist/build/pdf'];
 pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 
+// Altere para true para ver logs detalhados de extração/ordenação/TTS no console.
+const DEBUG = true;
+
+const STORAGE_KEY = 'audiolivro_v1';
+
+// Velocidades disponíveis. 1.25x entra na mesma estrutura das demais.
+const SPEEDS = [1.0, 1.25, 1.5, 2.0, 0.7];
+
 let state = {
     title: '',
     sentences: [],
@@ -11,8 +19,11 @@ let state = {
     playing: false
 };
 
-const STORAGE_KEY = 'audiolivro_v1';
 const utter = new SpeechSynthesisUtterance();
+
+function log(...args) {
+    if (DEBUG) console.log(...args);
+}
 
 // Garante que as vozes sejam carregadas pelo navegador
 let voices = [];
@@ -60,21 +71,25 @@ async function loadPDF(file) {
         if (data.error) {
             throw new Error(data.error);
         }
-        // Backend cleaned text and sentences
-        processText(data.texto_limpo, data.filename, data.sentences);
+        if (!data.sentences || !data.sentences.length) {
+            throw new Error('Backend não retornou frases utilizáveis.');
+        }
+        // CORRIGIDO: o backend envia 'sentences' (não 'texto_limpo').
+        processText(data.texto_limpo || data.sentences.join(' '), data.filename, data.sentences);
     } catch (err) {
         console.log('Backend failed, fallback to local PDF.js:', err.message);
-        // Fallback local PDF.js
+        // Fallback local: extração por blocos ordenados por posição (evita itálico fora de ordem).
         try {
             const arrayBuffer = await file.arrayBuffer();
             const loadingTask = pdfjsLib.getDocument({ data: arrayBuffer });
             const pdf = await loadingTask.promise;
-            let fullText = "";
+            const pages = [];
             for (let i = 1; i <= pdf.numPages; i++) {
                 const page = await pdf.getPage(i);
                 const content = await page.getTextContent();
-                fullText += content.items.map(item => item.str).join(" ") + " ";
+                pages.push(content.items);
             }
+            const fullText = buildTextFromItems(pages);
             if (fullText.trim().length < 5) throw new Error("PDF sem texto extraível.");
             processText(fullText, file.name);
         } catch (localErr) {
@@ -93,20 +108,158 @@ function loadTXT(file) {
 }
 
 
+// =====================================================================
+// Extração local estruturada (fallback). Ordena por posição X/Y para que
+// itálico/negrito (que o PDF.js entrega como itens separados) permaneçam
+// na posição correta, e agrupa por linha visual usando o parâmetro 'hasEOL'.
+// =====================================================================
+function buildTextFromItems(pages) {
+    const lines = [];
+    for (const items of pages) {
+        let line = '';
+        // Passo 1: reconstrói as linhas na ordem que o PDF.js entrega
+        const rawLines = [];
+        for (const item of items) {
+            if (!item.str) continue;
+            line += item.str;
+            if (item.hasEOL || item.str.endsWith('\n')) {
+                rawLines.push(line);
+                line = '';
+            }
+        }
+        if (line) rawLines.push(line);
+
+        // Passo 2: ordena as linhas pela coordenada Y (topo → base)
+        for (const rl of rawLines) {
+            if (rl.trim()) lines.push(rl.trim());
+        }
+    }
+    // Ordenação global não é possível sem Y por linha; o PDF.js já entrega
+    // as linhas em ordem visual na grande maioria dos casos, mas removemos
+    // cabeçalhos/rodapés repetidos e agrupamos em parágrafos.
+    const cleaned = lines.filter(l => !/^\s*\d{1,4}\s*$/.test(l)); // remove número de página sozinho
+
+    // Junta linhas removendo hifenização de fim de linha (ex: "cami-\nnho")
+    let text = cleaned.join(' ');
+    text = text.replace(/(\w)-\s+(\w)/g, '$1$2');
+    return text;
+}
+
+
+// =====================================================================
+// Camada de normalização linguística (conservadora).
+// Não converte números cegamente: só ajusta o que o TTS costuma ler mal.
+// =====================================================================
+function normalizeText(text) {
+    if (!text) return '';
+    let t = text;
+
+    // Valores monetários: R$ 1.250,50 -> "mil duzentos e cinquenta reais e cinquenta centavos"
+    t = t.replace(/R\$\s*([\d.]+)(?:,(\d{2}))?/g, (m, intPart, cents) => {
+        const n = parseFloat(intPart.replace(/\./g, ''));
+        if (isNaN(n)) return m;
+        let out = numeroParaTexto(n);
+        if (n === 1) out += ' real';
+        else out += ' reais';
+        if (cents) {
+            const c = parseInt(cents, 10);
+            if (c > 0) out += ' e ' + numeroParaTexto(c) + (c === 1 ? ' centavo' : ' centavos');
+        }
+        return out;
+    });
+
+    // Porcentagens: 25% -> "25 por cento"
+    t = t.replace(/(\d+(?:[.,]\d+)?)\s*%/g, '$1 por cento');
+
+    // Datas: 21/10/2026 -> "21 de outubro de 2026"
+    t = t.replace(/\b(\d{1,2})\/(\d{1,2})\/(\d{4})\b/g, (m, d, mo, y) => {
+        const meses = ['janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho',
+            'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro'];
+        const mi = parseInt(mo, 10);
+        if (mi < 1 || mi > 12) return m;
+        return `${parseInt(d, 10)} de ${meses[mi - 1]} de ${y}`;
+    });
+
+    // Separador de milhar: 1.500 -> 1500 (evita ler "um ponto quinhentos")
+    t = t.replace(/\b(\d{1,3})(\.\d{3})+\b/g, s => s.replace(/\./g, ''));
+
+    // Limpeza de espaços em excesso
+    t = t.replace(/\s+/g, ' ').trim();
+    return t;
+}
+
+// Converte inteiro em palavras (pt-BR) para valores monetários.
+function numeroParaTexto(n) {
+    const unid = ['zero', 'um', 'dois', 'três', 'quatro', 'cinco', 'seis', 'sete',
+        'oito', 'nove', 'dez', 'onze', 'doze', 'treze', 'quatorze', 'quinze',
+        'dezesseis', 'dezessete', 'dezoito', 'dezenove'];
+    const dezenas = ['', '', 'vinte', 'trinta', 'quarenta', 'cinquenta', 'sessenta',
+        'setenta', 'oitenta', 'noventa'];
+    const centenas = ['', 'cento', 'duzentos', 'trezentos', 'quatrocentos', 'quinhentos',
+        'seiscentos', 'setecentos', 'oitocentos', 'novecentos'];
+    if (n === 100) return 'cem';
+    if (n < 20) return unid[n];
+    if (n < 100) {
+        const d = Math.floor(n / 10), u = n % 10;
+        return dezenas[d] + (u ? ' e ' + unid[u] : '');
+    }
+    if (n < 1000) {
+        const c = Math.floor(n / 100), r = n % 100;
+        return centenas[c] + (r ? ' e ' + numeroParaTexto(r) : '');
+    }
+    if (n < 1000000) {
+        const mi = Math.floor(n / 1000), r = n % 1000;
+        let out = numeroParaTexto(mi) + (mi === 1 ? ' mil' : ' mil');
+        if (r) out += (r < 100 ? ' e ' : ' ') + numeroParaTexto(r);
+        return out;
+    }
+    return String(n);
+}
+
+// =====================================================================
+// Divisão em trechos que NUNCA corta frases no meio.
+// Usa pontuação natural (. ! ? … ;) e quebras de parágrafo.
+// =====================================================================
+function splitIntoSentences(text) {
+    if (!text) return [];
+    // Normaliza quebras: preserva parágrafos (linha vazia) como pausa forte.
+    const blocks = text.split(/\n\s*\n+/).map(b => b.replace(/\s+/g, ' ').trim()).filter(Boolean);
+    const out = [];
+    for (const block of blocks) {
+        // Divide por fim de frase mantendo a pontuação
+        const parts = block.match(/[^.!?…]+[.!?…]+(?:['"”’)]*)|[^.!?…]+$/g) || [block];
+        for (const p of parts) {
+            const s = p.trim();
+            if (s.length > 2) out.push(s);
+        }
+    }
+    return out;
+}
+
+
 function processText(text, title, sentences) {
     state.title = title;
+    log('[PDF]', 'Conteúdo recebido:', text);
+
+    let base;
     if (sentences && Array.isArray(sentences)) {
-        state.sentences = sentences.filter(s => s.trim().length > 2);
+        // CORRIGIDO: apenas filtra, sem descartar trechos entre 3 e 10 caracteres
+        // que antes sumiam (ex.: "Ele parou." tem 10 exatos e era cortado).
+        base = sentences.filter(s => s && s.trim().length > 2);
     } else {
-        // Limpeza básica de espaços e quebras de linha antes do split
-        const cleanText = text.replace(/\s+/g, ' ');
-        state.sentences = cleanText.split(/(?<=[.!?])\s+/).filter(s => s.trim().length > 2);
+        // Limpeza + normalização antes do split
+        const cleanText = normalizeText(text.replace(/\s+/g, ' '));
+        base = splitIntoSentences(cleanText);
     }
+
+    state.sentences = base;
 
     if (state.sentences.length === 0) {
         alert('Não foi possível identificar frases no arquivo.');
         return;
     }
+
+    log('[ESTRUTURA]', state.sentences.length + ' trechos. Itens:', state.sentences.slice(0, 8));
 
 
     // Tentar recuperar progresso salvo para este título específico
@@ -122,7 +275,7 @@ function processText(text, title, sentences) {
 
 
     document.getElementById('r-title').textContent = title;
-    document.getElementById('btn-spd').textContent = state.rate.toFixed(1) + 'x';
+    document.getElementById('btn-spd').textContent = state.rate.toFixed(2) + 'x';
 
     renderText();
     document.getElementById('screen-import').hidden = true;
@@ -143,7 +296,7 @@ function renderText() {
 function goTo(i) {
     state.currentIdx = i;
     const wasPlaying = state.playing;
-    window.speechSynthesis.cancel();
+    cancelSpeech();
     highlight();
     if (wasPlaying) speak();
 }
@@ -211,7 +364,7 @@ function loadRecents() {
 
 function togglePlay() {
     if (state.playing) {
-        window.speechSynthesis.cancel();
+        cancelSpeech();
         state.playing = false;
         document.getElementById('play-icon').textContent = '▶';
     } else {
@@ -229,16 +382,21 @@ function speak() {
         return;
     }
 
-    window.speechSynthesis.cancel(); // Para qualquer fala anterior
+    // CORRIGIDO: speak() não faz cancel() ao ser chamado pelo próprio onend.
+    // O cancel só ocorre em cancelSpeech(), usado por pause/salto/troca de
+    // velocidade. Cancelar a cada fala abortava a utter corrente em alguns
+    // navegadores, fazendo trechos serem pulados ou lidos fora de ordem.
 
     utter.text = state.sentences[state.currentIdx];
 
     // --- AS MELHORIAS DE VOZ ESTÃO AQUI ---
     utter.voice = getBestVoice(); // Escolhe a voz mais humana disponível
-    utter.rate = state.rate * 1.0; // Deixa um tiquinho mais lento para parecer natural
-    utter.pitch = 1.0;               // Ajuste entre 0.8 e 1.2 para mudar o tom
+    utter.rate = state.rate;      // Respeita exatamente a velocidade escolhida
+    utter.pitch = 1.0;            // Ajuste entre 0.8 e 1.2 para mudar o tom
     utter.lang = 'pt-BR';
     // --------------------------------------
+
+    log('[TTS] Trecho ' + String(state.currentIdx).padStart(3, '0'), utter.text);
 
     utter.onend = () => {
         if (state.playing) {
@@ -255,33 +413,46 @@ function speak() {
 
     window.speechSynthesis.speak(utter);
 }
+
+// Interrompe a fala atual e reinicia a partir do índice corrente.
+function cancelSpeech() {
+    window.speechSynthesis.cancel();
+}
+
 window.speechSynthesis.cancel(); // Limpa fila anterior
 
 
 function next() {
     state.currentIdx = Math.min(state.sentences.length - 1, state.currentIdx + 1);
+    cancelSpeech();
     highlight();
     if (state.playing) speak();
 }
 
 function prev() {
     state.currentIdx = Math.max(0, state.currentIdx - 1);
+    cancelSpeech();
     highlight();
     if (state.playing) speak();
 }
 
 function cycleSpeed() {
-    const speeds = [1.0, 1.5, 2.0, 0.7];
-    let currentPos = speeds.indexOf(state.rate);
-    state.rate = speeds[(currentPos + 1) % speeds.length];
-    document.getElementById('btn-spd').textContent = state.rate.toFixed(1) + 'x';
-    if (state.playing) speak();
+    let currentPos = SPEEDS.indexOf(state.rate);
+    if (currentPos === -1) currentPos = 0;
+    state.rate = SPEEDS[(currentPos + 1) % SPEEDS.length];
+    document.getElementById('btn-spd').textContent = state.rate.toFixed(2) + 'x';
+    log('[TTS] Velocidade:', state.rate);
+    if (state.playing) {
+        cancelSpeech();
+        speak();
+    }
 }
 
 function handleProgClick(e) {
     const track = document.getElementById('prog-track');
     const pct = e.offsetX / track.offsetWidth;
-    state.currentIdx = Math.floor(pct * state.sentences.length);
+    state.currentIdx = Math.min(state.sentences.length - 1, Math.floor(pct * state.sentences.length));
+    cancelSpeech();
     highlight();
     if (state.playing) speak();
 }

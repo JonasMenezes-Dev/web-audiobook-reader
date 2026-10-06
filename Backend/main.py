@@ -1,18 +1,22 @@
-from fastapi import FastAPI, File, UploadFile, HTTPException
+import io
+import re
+from typing import Any
+
+import mysql.connector
+import uvicorn
+from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-import mysql.connector
-import re
-import io
-import uvicorn
 
-# Tentativa de importação do pypdf
+# Importação opcional do pypdf. Sem a lib, a rota /upload-pdf/ responde 400.
+PdfReader: Any
 try:
-    from pypdf import PdfReader
-    PYPDF_AVAILABLE = True
+    from pypdf import PdfReader as _PdfReader
+    PdfReader = _PdfReader
 except ImportError:
     PdfReader = None
-    PYPDF_AVAILABLE = False
+
+PYPDF_AVAILABLE = PdfReader is not None
 
 app = FastAPI()
 
@@ -59,7 +63,12 @@ def limpar_texto_pdf(texto, paginas=None):
             resultado.append('')
             continue
         # Remove números de página isolados ("12", "12.", "- 12 -", "Página 12")
-        if re.fullmatch(r'[\-\u2013\u2014]?\s*(?:[Pp][áa]g(?:ina)?\.?\s*)?\d{1,4}\s*[\.\-\u2013\u2014]?', stripped):
+        padrao_pagina = (
+            r'[\-\u2013\u2014]?\s*'
+            r'(?:[Pp][áa]g(?:ina)?\.?\s*)?'
+            r'\d{1,4}\s*[\.\-\u2013\u2014]?'
+        )
+        if re.fullmatch(padrao_pagina, stripped):
             continue
         if stripped in repetidas:
             continue
@@ -68,16 +77,16 @@ def limpar_texto_pdf(texto, paginas=None):
     # Fallback por frequência: só quando não recebemos as páginas separadas.
     if not paginas:
         from collections import Counter
-        contagem = Counter(l for l in resultado if l)
-        total_linhas = sum(1 for l in resultado if l)
+        contagem = Counter(txt for txt in resultado if txt)
+        total_linhas = sum(1 for txt in resultado if txt)
         # Um cabeçalho/rodapé se repete uma vez por página. Estimando ~20 linhas
         # úteis por página, esperamos repetição em >= ~5% das linhas.
         limite = max(2, int(total_linhas * 0.05))
         repetidas_freq = {
-            l for l, c in contagem.items()
-            if c >= limite and len(l) <= 80 and not l.endswith(('.', '!', '?', ':'))
+            txt for txt, c in contagem.items()
+            if c >= limite and len(txt) <= 80 and not txt.endswith(('.', '!', '?', ':'))
         }
-        resultado = [l for l in resultado if l not in repetidas_freq]
+        resultado = [txt for txt in resultado if txt not in repetidas_freq]
 
     # Reagrupa em parágrafos. Uma linha que PARECE TÍTULO (curta, sem
     # pontuação final de frase, em CAIXA ALTA ou iniciando com "Capítulo") vira
@@ -85,19 +94,19 @@ def limpar_texto_pdf(texto, paginas=None):
     # página — para não colar no texto seguinte.
     paragrafos = []
     buffer = []
-    for l in resultado:
-        if not l:
+    for txt in resultado:
+        if not txt:
             if buffer:
                 paragrafos.append(' '.join(buffer))
                 buffer = []
             continue
-        if _parece_titulo(l):
+        if _parece_titulo(txt):
             if buffer:
                 paragrafos.append(' '.join(buffer))
                 buffer = []
-            paragrafos.append(l.strip())
+            paragrafos.append(txt.strip())
             continue
-        buffer.append(l)
+        buffer.append(txt)
     if buffer:
         paragrafos.append(' '.join(buffer))
 
@@ -146,15 +155,15 @@ def _detectar_cabecalho_rodape(paginas):
     contagem = Counter()
     paginas_validas = 0
     for pag in paginas:
-        linhas = [l.strip() for l in pag.split('\n') if l.strip()]
+        linhas = [txt.strip() for txt in pag.split('\n') if txt.strip()]
         # Número de página puro não entra como candidato (já é removido antes)
-        linhas = [l for l in linhas if not re.fullmatch(r'\d{1,4}', l)]
+        linhas = [txt for txt in linhas if not re.fullmatch(r'\d{1,4}', txt)]
         if not linhas:
             continue
         paginas_validas += 1
         candidatos = set(linhas[:MARGEM]) | set(linhas[-MARGEM:])
-        for l in candidatos:
-            contagem[l] += 1
+        for txt in candidatos:
+            contagem[txt] += 1
 
     if paginas_validas < 2:
         return set()
@@ -163,8 +172,8 @@ def _detectar_cabecalho_rodape(paginas):
     # quando o documento tem só 2 páginas).
     minimo = 2
     return {
-        l for l, c in contagem.items()
-        if c >= min(minimo, paginas_validas) and len(l) <= 80
+        txt for txt, c in contagem.items()
+        if c >= min(minimo, paginas_validas) and len(txt) <= 80
     }
 
 
@@ -191,8 +200,6 @@ def dividir_em_frases(texto):
 
         # 1.250,50 -> 1\x00250,50   |   1.500 -> 1\x00500   |   2.5 -> 2\x005
         paragrafo = re.sub(r'\d\.\d', proteger, paragrafo)
-        # 3,14 (vírgula decimal em pt-BR já é preservada, mas barramos "x,y")
-        paragrafo = re.sub(r'R\$\s*\d[\d\x00]*(?:,\d{2})?', lambda m: m.group(0), paragrafo)
 
         partes = re.findall(r'[^.!?\u2026]+[.!?\u2026]+|[^.!?\u2026]+$', paragrafo)
         for p in partes:
@@ -232,7 +239,7 @@ def salvar_progresso(progresso: DadosProgresso):
             conn.close() # GARANTE que a conexão feche
 
 @app.post("/upload-pdf/")
-async def processar_pdf(file: UploadFile = File(...)):
+async def processar_pdf(file: UploadFile = File()):
     if not PYPDF_AVAILABLE:
         raise HTTPException(status_code=400, detail="Instale pypdf: pip install pypdf")
 

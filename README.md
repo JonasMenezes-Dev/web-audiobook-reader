@@ -46,4 +46,69 @@ Para habilitar o salvamento em MySQL no seu ambiente local:
 3. Ajuste a velocidade se necessário e dê o Play.
 4. Clique em qualquer frase para saltar diretamente para aquele trecho.
 
+# Testes e Regressão
+
+O projeto possui um **PDF de regressão** e uma suíte automatizada que valida toda a
+cadeia de extração: `PDF → texto → frases → fila TTS`.
+
+### Gerar o PDF de regressão
+
+```bash
+python Backend/make_test_pdf.py
+```
+
+Gera `tests/fixtures/regressao.pdf` com os 16 casos exigidos: título, subtítulo,
+parágrafo, itálico, negrito, números, datas, moeda, porcentagens, parênteses,
+cabeçalho, rodapé, número de página, duas colunas, frases curtas e longas.
+
+### Rodar os testes automatizados
+
+```bash
+python -m pytest tests/test_pipeline.py -v
+```
+
+Cobrem: remoção de cabeçalho/rodapé/número de página, integridade de decimais
+(`R$ 1.250,50`, `1.500`), parênteses, ausência de duplicatas, ordem das colunas,
+índice dos capítulos, título isolado do parágrafo, presença da velocidade `1.25x`
+e ausência de `cancel()` dentro de `speak()`.
+
+### Diagnóstico visual do pipeline
+
+```bash
+python tests/diagnostico.py            # usa o PDF de regressão
+python tests/diagnostico.py meu.pdf    # ou um PDF seu
+```
+
+Imprime o texto bruto, o texto limpo e cada frase numerada na **ordem exata de
+envio ao TTS**, permitindo detectar trechos fora de ordem, pulados ou duplicados.
+
+### Teste end-to-end (backend real)
+
+Com o backend rodando:
+
+```bash
+python tests/e2e_upload.py
+```
+
+Envia o PDF de regressão para `POST /upload-pdf/` e mostra o JSON que o frontend
+recebe.
+
+# Modo DEBUG
+
+Em `script.js`:
+
+```javascript
+const DEBUG = true;   // logs de [PDF], [ESTRUTURA] e [TTS] Trecho NNN no console
+```
+
+Durante o desenvolvimento, deixe `true` para acompanhar o console:
+
+```text
+[TTS] Trecho 001 ...
+[TTS] Trecho 002 ...
+```
+
+A sequência deve ser `001 → 002 → 003`. Padrões como `001 → 002 → 004` indicam
+problema de ordenação; `002 → 002` indica duplicação. **Desative ao publicar.**
+
 *Projeto desenvolvido para fins de estudo sobre manipulação de APIs de áudio e persistência de dados local.*

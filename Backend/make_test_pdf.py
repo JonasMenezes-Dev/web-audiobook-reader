@@ -9,23 +9,26 @@ Uso:  python Backend/make_test_pdf.py
 Saida: tests/fixtures/regressao.pdf
 """
 import os
+
+from reportlab.lib.enums import TA_JUSTIFY
 from reportlab.lib.pagesizes import A4
+from reportlab.lib.styles import ParagraphStyle
 from reportlab.lib.units import cm
 from reportlab.pdfgen import canvas
-from reportlab.lib.styles import ParagraphStyle
 from reportlab.platypus import Paragraph
-from reportlab.lib.enums import TA_CENTER, TA_JUSTIFY
 
-OUT_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "tests", "fixtures")
+OUT_DIR = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "tests", "fixtures"
+)
 OUT = os.path.join(OUT_DIR, "regressao.pdf")
 
 W, H = A4
 HEADER = "AUDIOLIVRO PRO - MANUAL DE TESTE"
 FOOTER = "Documento de regressao - uso interno"
 
-H1 = ParagraphStyle('H1', fontName='Helvetica-Bold', fontSize=24, leading=30, alignment=TA_CENTER)
-H2 = ParagraphStyle('H2', fontName='Helvetica-BoldOblique', fontSize=16, leading=22, alignment=TA_CENTER)
-BODY = ParagraphStyle('BODY', fontName='Helvetica', fontSize=11, leading=16, alignment=TA_JUSTIFY)
+BODY = ParagraphStyle(
+    'BODY', fontName='Helvetica', fontSize=11, leading=16, alignment=TA_JUSTIFY,
+)
 
 
 def chrome(c, page_no):
@@ -44,9 +47,14 @@ def two_columns(c, left_flowables, right_flowables, top, height, left_x, right_x
     for x, flowables in ((left_x, left_flowables), (right_x, right_flowables)):
         y = top - 0.4 * cm
         for para in flowables:
-            w, h = para.wrap(col_w, height)
-            para.drawOn(c, x, y - h)
-            y -= h + 6
+            y = draw_para(c, para, x, y, col_w) - 6
+
+
+def draw_para(c, para, x, y, max_w):
+    """Desenha um Paragraph em (x, y) e devolve o novo y (abaixo dele)."""
+    _w, h = para.wrap(max_w, H)
+    para.drawOn(c, x, y - h)
+    return y - h
 
 
 def build():
@@ -67,27 +75,27 @@ def build():
         "Ele contem frases curtas. E tambem uma frase consideravelmente mais longa, "
         "construida propositalmente para verificar se a divisao em trechos respeita "
         "a pontuacao e nao corta o sentido no meio de uma oracao.", st)
-    w, h = para.wrap(W - 4 * cm, H); para.drawOn(c, 2 * cm, y - h); y -= h + 10
+    y = draw_para(c, para, 2 * cm, y, W - 4 * cm) - 10
 
     para = Paragraph(
         "Neste paragrafo existe uma palavra em <i>italico</i> no meio da frase, "
         "seguida de texto normal. O leitor deve pronunciar na ordem: normal, italico, normal.", st)
-    w, h = para.wrap(W - 4 * cm, H); para.drawOn(c, 2 * cm, y - h); y -= h + 10
+    y = draw_para(c, para, 2 * cm, y, W - 4 * cm) - 10
 
     para = Paragraph(
         "Aqui temos uma palavra em <b>negrito</b> e outra em <i>italico</i> juntas, "
         "para testar formatacao mista no fluxo do texto.", st)
-    w, h = para.wrap(W - 4 * cm, H); para.drawOn(c, 2 * cm, y - h); y -= h + 10
+    y = draw_para(c, para, 2 * cm, y, W - 4 * cm) - 10
 
     para = Paragraph(
         "O computador utiliza memoria RAM (Random Access Memory) para armazenar "
         "dados temporariamente.", st)
-    w, h = para.wrap(W - 4 * cm, H); para.drawOn(c, 2 * cm, y - h); y -= h + 10
+    y = draw_para(c, para, 2 * cm, y, W - 4 * cm) - 10
 
     para = Paragraph(
         "O ano e 2026. A taxa e de 25%. O valor e R$ 1.250,50. "
         "A data limite e 21/10/2026. O total e 1.500 itens.", st)
-    w, h = para.wrap(W - 4 * cm, H); para.drawOn(c, 2 * cm, y - h)
+    draw_para(c, para, 2 * cm, y, W - 4 * cm)
     c.showPage()
 
     # ---------------- Pagina 2: listas e frases curtas ----------------
@@ -99,12 +107,12 @@ def build():
              "Terceiro item com (parentese) interno.", "Quarto item final."]
     for it in itens:
         para = Paragraph("- " + it, BODY)
-        w, h = para.wrap(W - 4 * cm, H); para.drawOn(c, 2 * cm, y - h); y -= h + 6
+        y = draw_para(c, para, 2 * cm, y, W - 4 * cm) - 6
 
     y -= 10
     for frase in ["Curta.", "Outra curta!", "Terceira curta?", "Quarta e ultima."]:
         para = Paragraph(frase, BODY)
-        w, h = para.wrap(W - 4 * cm, H); para.drawOn(c, 2 * cm, y - h); y -= h + 6
+        y = draw_para(c, para, 2 * cm, y, W - 4 * cm) - 6
     c.showPage()
 
     # ---------------- Pagina 3: duas colunas ----------------
