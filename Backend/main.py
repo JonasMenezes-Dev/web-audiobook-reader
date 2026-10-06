@@ -1,4 +1,3 @@
-import io
 import re
 from typing import Any
 
@@ -8,7 +7,16 @@ from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-# Importação opcional do pypdf. Sem a lib, a rota /upload-pdf/ responde 400.
+# Importação opcional do PyMuPDF. A extração antiga continua disponível abaixo
+# para compatibilidade e diagnóstico.
+fitz: Any
+try:
+    import pymupdf as _fitz
+    fitz = _fitz
+except ImportError:
+    fitz = None
+
+# Mantido para compatibilidade com a extração antiga e os testes de regressão.
 PdfReader: Any
 try:
     from pypdf import PdfReader as _PdfReader
@@ -33,6 +41,313 @@ db_config = {
     'password': "", # Verifique se sua senha é vazia mesmo
     'database': "audiolivro_db"
 }
+
+
+def extrair_blocos_pdf(caminho_pdf):
+    """Extrai spans de texto e suas posições e características tipográficas."""
+    if fitz is None:
+        raise RuntimeError("Instale PyMuPDF: pip install pymupdf")
+
+    if isinstance(caminho_pdf, (bytes, bytearray)):
+        documento = fitz.open(stream=caminho_pdf, filetype="pdf")
+    else:
+        documento = fitz.open(caminho_pdf)
+
+    blocos = []
+    try:
+        for numero_pagina, pagina in enumerate(documento):
+            dados = pagina.get_text("dict")
+            for numero_bloco, bloco in enumerate(dados.get("blocks", [])):
+                if bloco.get("type") != 0:
+                    continue
+                for numero_linha, linha in enumerate(bloco.get("lines", [])):
+                    for span in linha.get("spans", []):
+                        texto = span.get("text", "")
+                        if not texto.strip():
+                            continue
+                        x0, y0, x1, y1 = span["bbox"]
+                        blocos.append({
+                            "pagina": numero_pagina,
+                            "altura_pagina": pagina.rect.height,
+                            "bloco": numero_bloco,
+                            "linha": numero_linha,
+                            "x": x0,
+                            "y": y0,
+                            "x1": x1,
+                            "y1": y1,
+                            "texto": texto,
+                            "fonte": span.get("font", ""),
+                            "tamanho": span.get("size", 0),
+                            "flags": span.get("flags", 0),
+                        })
+    finally:
+        documento.close()
+    return blocos
+
+
+def ordenar_blocos(blocos):
+    """Ordena spans pela página e posição; desempata linhas da esquerda à direita."""
+    return sorted(
+        blocos,
+        key=lambda bloco: (
+            bloco["pagina"],
+            round(bloco["y"], 1),
+            bloco["x"],
+        ),
+    )
+
+
+def reconstruir_estrutura_pdf(blocos):
+    """Reconstrói linhas e parágrafos mantendo os spans tipográficos na ordem."""
+    ordenados = ordenar_blocos(blocos)
+    linhas_margem = _detectar_margens_blocos(ordenados)
+    linhas_por_pagina = {}
+    linhas_por_identificador = {}
+
+    for span in ordenados:
+        identificador = (span["pagina"], span["bloco"], span["linha"])
+        if (
+            identificador in linhas_margem
+            or re.fullmatch(
+                r"(?:[Pp][áa]g(?:ina)?\.?\s*)?\d{1,4}",
+                span["texto"].strip(),
+            )
+        ):
+            continue
+        pagina = span["pagina"]
+        linhas = linhas_por_pagina.setdefault(pagina, [])
+        linha = linhas_por_identificador.get(identificador)
+        if linha is None:
+            linha = {
+                "pagina": pagina,
+                "x": span["x"],
+                "x1": span["x1"],
+                "y": span["y"],
+                "y1": span["y1"],
+                "spans": [],
+            }
+            linhas.append(linha)
+            linhas_por_identificador[identificador] = linha
+        linha["spans"].append(span)
+        linha["x"] = min(linha["x"], span["x"])
+        linha["x1"] = max(linha["x1"], span["x1"])
+        linha["y"] = min(linha["y"], span["y"])
+        linha["y1"] = max(linha["y1"], span["y1"])
+
+    linhas = []
+    for pagina in sorted(linhas_por_pagina):
+        pagina_linhas = linhas_por_pagina[pagina]
+        pagina_linhas.sort(key=lambda linha: (round(linha["y"], 1), linha["x"]))
+        linhas.extend(_ordenar_linhas_colunas(pagina_linhas))
+
+    paragrafos = []
+    atual = None
+    linha_anterior = None
+    for linha in linhas:
+        linha["spans"].sort(key=lambda span: span["x"])
+        texto_linha = _texto_da_linha(linha["spans"])
+        if not texto_linha:
+            continue
+
+        tamanho_medio = sum(
+            span.get("tamanho", 10) or 10 for span in linha["spans"]
+        ) / len(linha["spans"])
+        novo_paragrafo = atual is None
+        if linha_anterior is not None:
+            mesma_coluna = (
+                linha["pagina"] == linha_anterior["pagina"]
+                and abs(linha["x"] - linha_anterior["x"])
+                    <= max(18, tamanho_medio * 2)
+            )
+            espaco_vertical = linha["y"] - linha_anterior["y1"]
+            novo_paragrafo = (
+                not mesma_coluna
+                or linha["pagina"] != linha_anterior["pagina"]
+                or espaco_vertical > tamanho_medio * 0.8
+            )
+
+        if novo_paragrafo:
+            if atual:
+                paragrafos.append(atual)
+            atual = {
+                "tipo": "paragrafo",
+                "texto": texto_linha,
+                "pagina": linha["pagina"],
+                "x": linha["x"],
+                "y": linha["y"],
+                "trechos": _trechos_da_linha(linha["spans"]),
+                "_tamanho": tamanho_medio,
+                "_negrito": all(_span_negrito(span) for span in linha["spans"]),
+            }
+        else:
+            if atual["texto"].endswith("-") and texto_linha[:1].isalpha():
+                atual["texto"] = atual["texto"][:-1] + texto_linha
+            else:
+                atual["texto"] += " " + texto_linha
+            atual["trechos"].extend(_trechos_da_linha(linha["spans"]))
+            atual["_tamanho"] = max(atual["_tamanho"], tamanho_medio)
+            atual["_negrito"] = atual["_negrito"] and all(
+                _span_negrito(span) for span in linha["spans"]
+            )
+        linha_anterior = linha
+
+    if atual:
+        paragrafos.append(atual)
+
+    tamanhos = sorted(paragrafo["_tamanho"] for paragrafo in paragrafos)
+    tamanho_base = tamanhos[len(tamanhos) // 2] if tamanhos else 0
+    for paragrafo in paragrafos:
+        paragrafo["texto"] = re.sub(r"[ \t]+", " ", paragrafo["texto"]).strip()
+        if paragrafo["texto"].endswith("-"):
+            paragrafo["texto"] = paragrafo["texto"][:-1]
+        paragrafo["tipo"] = (
+            "titulo"
+            if _parece_titulo(paragrafo["texto"])
+            or (
+                paragrafo["_negrito"]
+                and tamanho_base > 0
+                and paragrafo["_tamanho"] >= tamanho_base * 1.25
+                and len(paragrafo["texto"]) <= 60
+                and not paragrafo["texto"].endswith((".", ",", ";", ":", "!", "?"))
+            )
+            else "paragrafo"
+        )
+        del paragrafo["_tamanho"]
+        del paragrafo["_negrito"]
+    return paragrafos
+
+
+def _detectar_margens_blocos(blocos):
+    """Identifica cabeçalhos/rodapés repetidos pela posição em múltiplas páginas."""
+    linhas = {}
+    for span in blocos:
+        identificador = (span["pagina"], span["bloco"], span["linha"])
+        dados = linhas.setdefault(
+            identificador,
+            {
+                "spans": [],
+                "y": span["y"],
+                "altura_pagina": span.get("altura_pagina", 0),
+            },
+        )
+        dados["spans"].append(span)
+
+    paginas_por_texto = {}
+    for identificador, dados in linhas.items():
+        altura_pagina = dados["altura_pagina"]
+        texto = _texto_da_linha(sorted(dados["spans"], key=lambda span: span["x"]))
+        if not altura_pagina or not texto:
+            continue
+        if dados["y"] <= altura_pagina * 0.12 or dados["y"] >= altura_pagina * 0.88:
+            paginas_por_texto.setdefault(texto, set()).add(identificador[0])
+
+    repetidos = {
+        texto for texto, paginas in paginas_por_texto.items() if len(paginas) >= 2
+    }
+    return {
+        identificador
+        for identificador, dados in linhas.items()
+        if _texto_da_linha(sorted(dados["spans"], key=lambda span: span["x"])) in repetidos
+    }
+
+
+def _ordenar_linhas_colunas(linhas):
+    """Mantém títulos em ordem vertical e lê colunas independentes completas."""
+    if len(linhas) < 2:
+        return linhas
+
+    sobreposicoes = []
+    for indice, linha_a in enumerate(linhas):
+        for linha_b in linhas[indice + 1:]:
+            esquerda, direita = sorted((linha_a, linha_b), key=lambda linha: linha["x"])
+            vertical = min(esquerda["y1"], direita["y1"]) - max(
+                esquerda["y"], direita["y"]
+            )
+            horizontal = direita["x"] - esquerda["x1"]
+            if vertical > 0 and horizontal > 40:
+                sobreposicoes.append((esquerda, direita))
+
+    if not sobreposicoes:
+        return linhas
+
+    inicios_esquerda = [par[0]["x"] for par in sobreposicoes]
+    inicios_direita = [par[1]["x"] for par in sobreposicoes]
+    inicio_esquerda = min(inicios_esquerda)
+    inicio_direita = max(inicios_direita)
+    tolerancia_x = 24
+    linhas_colunas = [
+        linha for linha in linhas
+        if min(
+            abs(linha["x"] - inicio_esquerda),
+            abs(linha["x"] - inicio_direita),
+        ) <= tolerancia_x
+    ]
+    y_inicio = min(linha["y"] for linha in linhas_colunas)
+    y_fim = max(linha["y1"] for linha in linhas_colunas)
+    anteriores = [linha for linha in linhas if linha["y"] < y_inicio]
+    posteriores = [linha for linha in linhas if linha["y"] > y_fim]
+    centrais = [
+        linha for linha in linhas
+        if y_inicio <= linha["y"] <= y_fim
+    ]
+    esquerda = [
+        linha for linha in centrais
+        if abs(linha["x"] - inicio_esquerda) <= tolerancia_x
+    ]
+    direita = [
+        linha for linha in centrais
+        if abs(linha["x"] - inicio_direita) <= tolerancia_x
+    ]
+    ids_colunas = {id(linha) for linha in esquerda + direita}
+    neutras = [linha for linha in centrais if id(linha) not in ids_colunas]
+
+    def chave_y(linha):
+        return round(linha["y"], 1), linha["x"]
+
+    return (
+        sorted(anteriores, key=chave_y)
+        + sorted(esquerda, key=chave_y)
+        + sorted(neutras, key=chave_y)
+        + sorted(direita, key=chave_y)
+        + sorted(posteriores, key=chave_y)
+    )
+
+
+def _texto_da_linha(spans):
+    texto = ""
+    ultimo = None
+    for span in spans:
+        parte = span["texto"]
+        if ultimo and texto and not texto[-1].isspace() and not parte[:1].isspace():
+            tamanho = span.get("tamanho", 10) or 10
+            if span["x"] - ultimo["x1"] > max(1, tamanho * 0.15):
+                texto += " "
+        texto += parte
+        ultimo = span
+    return texto.strip()
+
+
+def _span_negrito(span):
+    fonte = span.get("fonte", "").lower()
+    return bool(span.get("flags", 0) & 16) or "bold" in fonte or "black" in fonte
+
+
+def _trechos_da_linha(spans):
+    trechos = []
+    for span in spans:
+        fonte = span.get("fonte", "")
+        flags = span.get("flags", 0)
+        trechos.append({
+            "texto": span["texto"],
+            "fonte": fonte,
+            "tamanho": span.get("tamanho", 0),
+            "negrito": _span_negrito(span),
+            "italico": bool(flags & 2) or any(
+                estilo in fonte.lower() for estilo in ("italic", "oblique")
+            ),
+        })
+    return trechos
+
 
 def limpar_texto_pdf(texto, paginas=None):
     """Limpa o texto bruto do PDF preservando parágrafos.
@@ -129,6 +444,8 @@ def _parece_titulo(linha):
         return False
     if s.endswith(('.', ',', ';', ':', '!', '?')):
         return False
+    if re.match(r'^\d+(?:\.\d+)*\.?\s+\S', s):
+        return True
     letras = [c for c in s if c.isalpha()]
     if len(letras) < 4:
         return False
@@ -198,8 +515,14 @@ def dividir_em_frases(texto):
         if not paragrafo:
             continue
 
-        # 1.250,50 -> 1\x00250,50   |   1.500 -> 1\x00500   |   2.5 -> 2\x005
-        paragrafo = re.sub(r'\d\.\d', proteger, paragrafo)
+        # Protege decimal/milhar, numeração hierárquica e marcador de seção no
+        # início do parágrafo ("1. Introdução") antes de procurar frases.
+        paragrafo = re.sub(r'(?<=\d)\.(?=\d)', proteger, paragrafo)
+        paragrafo = re.sub(
+            r'(?m)^(\s*\d+(?:\.\d+)*)(\.)(?=\s+\w)',
+            lambda m: m.group(1) + SENT,
+            paragrafo,
+        )
 
         partes = re.findall(r'[^.!?\u2026]+[.!?\u2026]+|[^.!?\u2026]+$', paragrafo)
         for p in partes:
@@ -240,23 +563,22 @@ def salvar_progresso(progresso: DadosProgresso):
 
 @app.post("/upload-pdf/")
 async def processar_pdf(file: UploadFile = File()):
-    if not PYPDF_AVAILABLE:
-        raise HTTPException(status_code=400, detail="Instale pypdf: pip install pypdf")
+    if fitz is None:
+        raise HTTPException(status_code=400, detail="Instale PyMuPDF: pip install pymupdf")
 
     try:
         contents = await file.read()
-        reader = PdfReader(io.BytesIO(contents))
-        paginas = [(page.extract_text() or "") for page in reader.pages]
-        texto_bruto = "\n".join(paginas)
-
-        texto_limpo = limpar_texto_pdf(texto_bruto, paginas=paginas)
+        blocos = extrair_blocos_pdf(contents)
+        estrutura = reconstruir_estrutura_pdf(blocos)
+        texto_limpo = "\n\n".join(item["texto"] for item in estrutura)
         sentences = dividir_em_frases(texto_limpo)
 
         return {
             "filename": file.filename,
             "total_frases": len(sentences),
             "texto_limpo": texto_limpo,
-            "sentences": sentences
+            "sentences": sentences,
+            "estrutura": estrutura,
         }
     except Exception as e:
         return {"error": str(e)}

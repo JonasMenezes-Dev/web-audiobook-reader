@@ -1,9 +1,9 @@
-"""Harness de diagnostico do pipeline (Etapas 1-3 do plano).
+"""Harness de diagnóstico do pipeline estrutural PDF.
 
-Roda a cadeia REAL do app contra o PDF de regressao e imprime:
-  1. texto bruto extraido (pypdf, igual ao backend)
-  2. texto limpo
-  3. frases enumeradas na ordem em que iriam para o TTS
+Roda a cadeia do backend contra o PDF de regressão e imprime:
+  1. spans brutos extraídos por posição (PyMuPDF)
+  2. texto com linhas/parágrafos reconstruídos
+  3. frases enumeradas na ordem enviada ao frontend
   4. verificacoes automaticas (duplicatas, perdas, ordem)
 
 Uso:  python tests/diagnostico.py [caminho/do.pdf]
@@ -14,15 +14,15 @@ import sys
 from collections import Counter
 from pathlib import Path
 
+import pymupdf as fitz
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "Backend"))
-
-from pypdf import PdfReader  # noqa: E402  (precisa vir apos o sys.path.insert)
 
 # Importa apenas as funcoes puras, sem puxar mysql/fastapi.
 _MAIN_PY = Path(ROOT, "Backend", "main.py")
 src = _MAIN_PY.read_text(encoding="utf-8")
-ns = {"re": re, "Counter": Counter}
+ns = {"re": re, "Counter": Counter, "fitz": fitz}
 
 def _extract_fn(src, name):
     start = src.index("def " + name + "(")
@@ -35,17 +35,15 @@ def _extract_fn(src, name):
     return "\n".join(body)
 
 for fn in ("limpar_texto_pdf", "_detectar_cabecalho_rodape",
-           "_parece_titulo", "dividir_em_frases"):
+           "_parece_titulo", "dividir_em_frases", "extrair_blocos_pdf",
+           "ordenar_blocos", "reconstruir_estrutura_pdf",
+           "_detectar_margens_blocos", "_ordenar_linhas_colunas",
+           "_texto_da_linha", "_span_negrito", "_trechos_da_linha"):
     exec(_extract_fn(src, fn), ns)
 
-limpar_texto_pdf = ns["limpar_texto_pdf"]
 dividir_em_frases = ns["dividir_em_frases"]
-
-
-def extrair_pypdf(path):
-    reader = PdfReader(path)
-    paginas = [(page.extract_text() or "") for page in reader.pages]
-    return "\n".join(paginas), paginas
+extrair_blocos_pdf = ns["extrair_blocos_pdf"]
+reconstruir_estrutura_pdf = ns["reconstruir_estrutura_pdf"]
 
 
 def main():
@@ -55,12 +53,14 @@ def main():
     print("PDF:", os.path.basename(path))
     print("=" * 70)
 
-    bruto, paginas = extrair_pypdf(path)
-    print("\n--- [1] TEXTO BRUTO (pypdf) ---")
+    blocos = extrair_blocos_pdf(path)
+    estrutura = reconstruir_estrutura_pdf(blocos)
+    bruto = "\n".join(bloco["texto"] for bloco in blocos)
+    print("\n--- [1] SPANS BRUTOS (PyMuPDF, ordem espacial) ---")
     print(bruto)
 
-    limpo = limpar_texto_pdf(bruto, paginas=paginas)
-    print("\n--- [2] TEXTO LIMPO ---")
+    limpo = "\n\n".join(item["texto"] for item in estrutura)
+    print("\n--- [2] TEXTO RECONSTRUÍDO ---")
     print(limpo)
 
     frases = dividir_em_frases(limpo)

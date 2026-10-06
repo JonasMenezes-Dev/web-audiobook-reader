@@ -14,7 +14,12 @@ import sys
 from collections import Counter
 from pathlib import Path
 
+import pymupdf as fitz
 import pytest
+from reportlab.lib.pagesizes import A4
+from reportlab.lib.styles import ParagraphStyle
+from reportlab.pdfgen import canvas
+from reportlab.platypus import Paragraph
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "Backend"))
@@ -27,7 +32,7 @@ SCRIPT_JS = Path(ROOT, "script.js")
 # --- importa as funcoes puras de main.py sem puxar mysql/fastapi ---
 _MAIN_PY = Path(__file__).resolve().parent.parent.joinpath("Backend", "main.py")
 _src = _MAIN_PY.read_text(encoding="utf-8")
-_ns = {"re": re, "Counter": Counter}
+_ns = {"re": re, "Counter": Counter, "fitz": fitz}
 
 
 def _extract_fn(src, name):
@@ -42,11 +47,16 @@ def _extract_fn(src, name):
 
 
 for _fn in ("limpar_texto_pdf", "_detectar_cabecalho_rodape",
-            "_parece_titulo", "dividir_em_frases"):
+            "_parece_titulo", "dividir_em_frases", "extrair_blocos_pdf",
+            "ordenar_blocos", "reconstruir_estrutura_pdf",
+            "_detectar_margens_blocos", "_ordenar_linhas_colunas",
+            "_texto_da_linha", "_span_negrito", "_trechos_da_linha"):
     exec(_extract_fn(_src, _fn), _ns)
 
 limpar_texto_pdf = _ns["limpar_texto_pdf"]
 dividir_em_frases = _ns["dividir_em_frases"]
+extrair_blocos_pdf = _ns["extrair_blocos_pdf"]
+reconstruir_estrutura_pdf = _ns["reconstruir_estrutura_pdf"]
 
 
 @pytest.fixture(scope="module")
@@ -111,6 +121,110 @@ def test_sem_duplicatas(pdf):
 def test_split_basico():
     assert dividir_em_frases("Frase um. Frase dois! Duvida? Sim.") == \
         ["Frase um.", "Frase dois!", "Duvida?", "Sim."]
+
+
+def test_numeracao_datas_e_valores_preservados_na_ordem():
+    texto = (
+        "1. Introdução\n\n"
+        "Este é um texto normal.\n\n"
+        "2.4.5 Interrupções\n\n"
+        "Este é um texto com uma palavra em negrito.\n\n"
+        "Este é um texto com uma palavra em itálico.\n\n"
+        "3.1.2 Procedimento\n\n"
+        "O valor é R$ 1.250,50.\n\n"
+        "A data é 21/10/2026.\n\n"
+        "A taxa é 25%.\n\n"
+        "O número é 10.000."
+    )
+    assert dividir_em_frases(texto) == [
+        "1. Introdução",
+        "Este é um texto normal.",
+        "2.4.5 Interrupções",
+        "Este é um texto com uma palavra em negrito.",
+        "Este é um texto com uma palavra em itálico.",
+        "3.1.2 Procedimento",
+        "O valor é R$ 1.250,50.",
+        "A data é 21/10/2026.",
+        "A taxa é 25%.",
+        "O número é 10.000.",
+    ]
+    assert _ns["_parece_titulo"]("2.4.5 Interrupções")
+
+
+def test_extracao_estrutural_preserva_posicao_e_formatacao():
+    blocos = extrair_blocos_pdf(Path(PDF).read_bytes())
+    estrutura = reconstruir_estrutura_pdf(blocos)
+    texto = "\n\n".join(item["texto"] for item in estrutura)
+
+    assert blocos
+    assert all(
+        {"pagina", "x", "y", "x1", "y1", "texto", "fonte", "tamanho", "flags"}
+        <= bloco.keys()
+        for bloco in blocos
+    )
+    assert "italico" in texto and "negrito" in texto
+    assert "MANUAL DE TESTE" not in texto
+    assert "uso interno" not in texto
+    assert any(
+        trecho["italico"]
+        for item in estrutura
+        for trecho in item["trechos"]
+    )
+    assert any(
+        trecho["negrito"]
+        for item in estrutura
+        for trecho in item["trechos"]
+    )
+
+    ordem = ["ESQUERDA A", "ESQUERDA B", "ESQUERDA C", "DIREITA A", "DIREITA B", "DIREITA C"]
+    indices = [next(i for i, item in enumerate(estrutura) if marcador in item["texto"])
+               for marcador in ordem]
+    assert indices == sorted(indices)
+
+
+def test_pdf_sintetico_preserva_estrutura_estilos_e_ordem(tmp_path):
+    conteudo = [
+        "1. Introdução",
+        "Este é um texto normal.",
+        "2.4.5 Interrupções",
+        "Este é um texto com uma palavra em <b>negrito</b>.",
+        "Este é um texto com uma palavra em <i>itálico</i>.",
+        "3.1.2 Procedimento",
+        "O valor é R$ 1.250,50.",
+        "A data é 21/10/2026.",
+        "A taxa é 25%.",
+        "O número é 10.000.",
+    ]
+    caminho = tmp_path / "pipeline-estrutural.pdf"
+    documento = canvas.Canvas(str(caminho), pagesize=A4)
+    estilo = ParagraphStyle("body", fontName="Helvetica", fontSize=11, leading=14)
+    y = A4[1] - 36
+    for texto in conteudo:
+        paragrafo = Paragraph(texto, estilo)
+        _, altura = paragrafo.wrap(A4[0] - 72, A4[1])
+        paragrafo.drawOn(documento, 36, y - altura)
+        y -= altura + 14
+    documento.save()
+
+    blocos = extrair_blocos_pdf(str(caminho))
+    estrutura = reconstruir_estrutura_pdf(blocos)
+    texto = "\n\n".join(item["texto"] for item in estrutura)
+    assert dividir_em_frases(texto) == [
+        "1. Introdução",
+        "Este é um texto normal.",
+        "2.4.5 Interrupções",
+        "Este é um texto com uma palavra em negrito.",
+        "Este é um texto com uma palavra em itálico.",
+        "3.1.2 Procedimento",
+        "O valor é R$ 1.250,50.",
+        "A data é 21/10/2026.",
+        "A taxa é 25%.",
+        "O número é 10.000.",
+    ]
+    assert any(item["tipo"] == "titulo" and "2.4.5 Interrupções" in item["texto"]
+               for item in estrutura)
+    assert any(trecho["negrito"] for item in estrutura for trecho in item["trechos"])
+    assert any(trecho["italico"] for item in estrutura for trecho in item["trechos"])
 
 
 # --------------------------- ordem ---------------------------

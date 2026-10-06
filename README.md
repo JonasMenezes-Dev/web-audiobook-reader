@@ -6,7 +6,7 @@ O **AudioLivro Pro** é uma aplicação web leve e intuitiva projetada para tran
 
 ##  Funcionalidades
 
-* **Leitura de PDF/TXT:** Extração de texto inteligente usando PDF.js.
+* **Leitura de PDF/TXT:** Extração estrutural de PDFs por posição com PyMuPDF; PDF.js continua como fallback local.
 * **Narração Customizável:** Seleção de vozes (masculinas/femininas) e controle de velocidade.
 * **Progresso Automático:** O app lembra exatamente em qual frase você parou, mesmo após fechar o navegador.
 * **Interface Imersiva:** Design focado na leitura com Dark Mode e destaque da frase atual.
@@ -16,8 +16,9 @@ O **AudioLivro Pro** é uma aplicação web leve e intuitiva projetada para tran
 O projeto utiliza uma arquitetura separada entre Cliente e Servidor para garantir performance e persistência robusta:
 
 * Frontend: HTML5, CSS3 (Flexbox/Grid), JavaScript ES6+.
-* APIs de Navegador: PDF.js (extração de texto) e Web Speech API (síntese de voz).
+* APIs de Navegador: PDF.js (fallback local) e Web Speech API (síntese de voz).
 * Backend (Motor): FastAPI (Python) — Framework moderno e de alta performance para a construção da API.
+* Extração PDF: PyMuPDF fornece posição, fonte, tamanho e estilo de cada span; o backend reconstrói linhas, parágrafos e títulos, preservando também a estrutura por trecho.
 * Validação de Dados: Pydantic — Garante que o contrato de dados entre o JS e o Python seja respeitado (evitando erros 422).
 * Banco de Dados: MySQL — Persistência relacional para salvar o progresso de leitura de múltiplos livros.
 * Comunicação: Fetch API com suporte a CORS para integração entre origens.
@@ -48,8 +49,8 @@ Para habilitar o salvamento em MySQL no seu ambiente local:
 
 # Testes e Regressão
 
-O projeto possui um **PDF de regressão** e uma suíte automatizada que valida toda a
-cadeia de extração: `PDF → texto → frases → fila TTS`.
+O projeto possui um **PDF de regressão** e uma suíte automatizada que valida a
+extração geométrica, a estrutura e a divisão: `PDF → spans → linhas/parágrafos → frases`.
 
 ### Gerar o PDF de regressão
 
@@ -67,7 +68,8 @@ cabeçalho, rodapé, número de página, duas colunas, frases curtas e longas.
 python -m pytest tests/test_pipeline.py -v
 ```
 
-Cobrem: remoção de cabeçalho/rodapé/número de página, integridade de decimais
+Cobrem: extração por posição com PyMuPDF, preservação de negrito/itálico, ordem das
+colunas, remoção de cabeçalho/rodapé/número de página, integridade de decimais
 (`R$ 1.250,50`, `1.500`), parênteses, ausência de duplicatas, ordem das colunas,
 índice dos capítulos, título isolado do parágrafo, presença da velocidade `1.25x`
 e ausência de `cancel()` dentro de `speak()`.
