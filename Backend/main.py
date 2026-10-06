@@ -102,7 +102,7 @@ def reconstruir_estrutura_pdf(blocos):
     ordenados = ordenar_blocos(blocos)
     linhas_margem = _detectar_margens_blocos(ordenados)
     linhas_por_pagina = {}
-    linhas_por_identificador = {}
+    linhas_por_bloco = {}
 
     for span in ordenados:
         identificador = (span["pagina"], span["bloco"], span["linha"])
@@ -116,7 +116,16 @@ def reconstruir_estrutura_pdf(blocos):
             continue
         pagina = span["pagina"]
         linhas = linhas_por_pagina.setdefault(pagina, [])
-        linha = linhas_por_identificador.get(identificador)
+        chave_bloco = (pagina, span["bloco"])
+        candidatas = linhas_por_bloco.setdefault(chave_bloco, [])
+        tolerancia_y = max(2.0, (span.get("tamanho", 10) or 10) * 0.25)
+        linha = next(
+            (
+                candidata for candidata in reversed(candidatas)
+                if abs(candidata["y"] - span["y"]) <= tolerancia_y
+            ),
+            None,
+        )
         if linha is None:
             linha = {
                 "pagina": pagina,
@@ -127,7 +136,7 @@ def reconstruir_estrutura_pdf(blocos):
                 "spans": [],
             }
             linhas.append(linha)
-            linhas_por_identificador[identificador] = linha
+            candidatas.append(linha)
         linha["spans"].append(span)
         linha["x"] = min(linha["x"], span["x"])
         linha["x1"] = max(linha["x1"], span["x1"])
@@ -208,7 +217,7 @@ def reconstruir_estrutura_pdf(blocos):
                 and tamanho_base > 0
                 and paragrafo["_tamanho"] >= tamanho_base * 1.25
                 and len(paragrafo["texto"]) <= 60
-                and not paragrafo["texto"].endswith((".", ",", ";", ":", "!", "?"))
+                and not paragrafo["texto"].endswith((".", ",", ";", ":", "!"))
             )
             else "paragrafo"
         )
@@ -260,6 +269,10 @@ def _ordenar_linhas_colunas(linhas):
     for indice, linha_a in enumerate(linhas):
         for linha_b in linhas[indice + 1:]:
             esquerda, direita = sorted((linha_a, linha_b), key=lambda linha: linha["x"])
+            blocos_esquerda = {span["bloco"] for span in esquerda["spans"]}
+            blocos_direita = {span["bloco"] for span in direita["spans"]}
+            if blocos_esquerda & blocos_direita:
+                continue
             vertical = min(esquerda["y1"], direita["y1"]) - max(
                 esquerda["y"], direita["y"]
             )
@@ -268,6 +281,13 @@ def _ordenar_linhas_colunas(linhas):
                 sobreposicoes.append((esquerda, direita))
 
     if not sobreposicoes:
+        return linhas
+
+    # A separação em colunas exige continuidade independente em ambos os
+    # lados. Um único encontro entre caixas de texto não caracteriza colunas.
+    y_esquerda = {round(esquerda["y"], 1) for esquerda, _ in sobreposicoes}
+    y_direita = {round(direita["y"], 1) for _, direita in sobreposicoes}
+    if len(y_esquerda) < 2 or len(y_direita) < 2:
         return linhas
 
     inicios_esquerda = [par[0]["x"] for par in sobreposicoes]
@@ -503,11 +523,17 @@ def dividir_em_frases(texto):
     if not texto:
         return []
 
-    # Marco sentinela que substitui separadores internos de números.
+    # Sentinelas impedem que separadores numéricos e reticências virem cortes.
     SENT = '\x00'
+    reticencias_protegidas = {}
 
     def proteger(m):
         return m.group(0).replace('.', SENT)
+
+    def proteger_reticencias(m):
+        marcador = f"{SENT}E{len(reticencias_protegidas)}{SENT}"
+        reticencias_protegidas[marcador] = m.group(0)
+        return marcador
 
     frases = []
     for paragrafo in texto.split('\n\n'):
@@ -515,19 +541,27 @@ def dividir_em_frases(texto):
         if not paragrafo:
             continue
 
+        paragrafo = re.sub(r'\.{2,}|…+', proteger_reticencias, paragrafo)
+
         # Protege decimal/milhar, numeração hierárquica e marcador de seção no
         # início do parágrafo ("1. Introdução") antes de procurar frases.
-        paragrafo = re.sub(r'(?<=\d)\.(?=\d)', proteger, paragrafo)
         paragrafo = re.sub(
             r'(?m)^(\s*\d+(?:\.\d+)*)(\.)(?=\s+\w)',
             lambda m: m.group(1) + SENT,
             paragrafo,
         )
+        paragrafo = re.sub(r'(?<=\d)\.(?=\d)', proteger, paragrafo)
 
-        partes = re.findall(r'[^.!?\u2026]+[.!?\u2026]+|[^.!?\u2026]+$', paragrafo)
+        partes = re.findall(
+            r"""[^.!?\u2026]+[.!?]+(?:["'”’»)\]}]*)|[^.!?\u2026]+$""",
+            paragrafo,
+        )
         for p in partes:
-            s = p.strip().replace(SENT, '.')
-            if len(s) > 2:
+            s = p.strip()
+            for marcador, reticencias in reticencias_protegidas.items():
+                s = s.replace(marcador, reticencias)
+            s = s.replace(SENT, '.')
+            if s:
                 frases.append(s)
     return frases
 

@@ -8,8 +8,11 @@ Cobre as regras que definimos:
 
 Uso:  python -m pytest tests/test_pipeline.py -v
 """
+import json
 import os
 import re
+import shutil
+import subprocess
 import sys
 from collections import Counter
 from pathlib import Path
@@ -57,6 +60,54 @@ limpar_texto_pdf = _ns["limpar_texto_pdf"]
 dividir_em_frases = _ns["dividir_em_frases"]
 extrair_blocos_pdf = _ns["extrair_blocos_pdf"]
 reconstruir_estrutura_pdf = _ns["reconstruir_estrutura_pdf"]
+
+SPLITTER_CASES = [
+    (
+        "Esta é uma frase normal longa, com várias informações e orações subordinadas, "
+        "para verificar se o texto continua em um único trecho até chegar ao ponto final.",
+        [
+            "Esta é uma frase normal longa, com várias informações e orações subordinadas, "
+            "para verificar se o texto continua em um único trecho até chegar ao ponto final."
+        ],
+    ),
+    (
+        "O processo começou... depois continuou normalmente.",
+        ["O processo começou... depois continuou normalmente."],
+    ),
+    (
+        'Ele escreveu "texto" e prosseguiu com a explicação.',
+        ['Ele escreveu "texto" e prosseguiu com a explicação.'],
+    ),
+    (
+        'Ela respondeu: "texto." Depois continuou a conversa.',
+        ['Ela respondeu: "texto."', "Depois continuou a conversa."],
+    ),
+    (
+        'Ela respondeu: "texto!" Depois continuou a conversa.',
+        ['Ela respondeu: "texto!"', "Depois continuou a conversa."],
+    ),
+    (
+        'Ela respondeu: "texto?" Depois continuou a conversa.',
+        ['Ela respondeu: "texto?"', "Depois continuou a conversa."],
+    ),
+    (
+        'Ela respondeu: "texto..." Depois continuou a conversa.',
+        ['Ela respondeu: "texto..." Depois continuou a conversa.'],
+    ),
+    (
+        "A memória RAM (Random Access Memory) armazena dados temporariamente.",
+        ["A memória RAM (Random Access Memory) armazena dados temporariamente."],
+    ),
+    (
+        "Consulte a seção 2.4.5 Interrupções.",
+        ["Consulte a seção 2.4.5 Interrupções."],
+    ),
+    ("1. Introdução", ["1. Introdução"]),
+    ("3.2.1 Procedimentos", ["3.2.1 Procedimentos"]),
+    ("O valor é R$ 1.250,50.", ["O valor é R$ 1.250,50."]),
+    ("A data é 21/10/2026.", ["A data é 21/10/2026."]),
+    ("O número é 10.000.", ["O número é 10.000."]),
+]
 
 
 @pytest.fixture(scope="module")
@@ -123,6 +174,45 @@ def test_split_basico():
         ["Frase um.", "Frase dois!", "Duvida?", "Sim."]
 
 
+@pytest.mark.parametrize(("entrada", "esperado"), SPLITTER_CASES)
+def test_splitter_backend_regressoes(entrada, esperado):
+    assert dividir_em_frases(entrada) == esperado
+
+
+def test_splitter_frontend_regressoes():
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("Node.js não está disponível para executar o splitter frontend")
+
+    script = (Path(ROOT) / "script.js").read_text(encoding="utf-8")
+    function = re.search(
+        r"function splitIntoSentences\(text\) \{[\s\S]*?\n\}",
+        script,
+    )
+    assert function, "splitIntoSentences não encontrada em script.js"
+
+    entradas = [entrada for entrada, _ in SPLITTER_CASES]
+    programa = (
+        f"{function.group(0)}\n"
+        f"const entradas = {json.dumps(entradas, ensure_ascii=True)};\n"
+        "process.stdout.write(JSON.stringify(entradas.map(splitIntoSentences)));"
+    )
+    resultado = subprocess.run(
+        [node, "-e", programa],
+        cwd=ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    )
+    saidas = json.loads(resultado.stdout)
+    assert saidas == [esperado for _, esperado in SPLITTER_CASES]
+
+
+def test_splitter_nao_descarta_frases_legitimamente_curtas():
+    assert dividir_em_frases("Oi. Sim.") == ["Oi.", "Sim."]
+
+
 def test_numeracao_datas_e_valores_preservados_na_ordem():
     texto = (
         "1. Introdução\n\n"
@@ -180,6 +270,81 @@ def test_extracao_estrutural_preserva_posicao_e_formatacao():
     indices = [next(i for i, item in enumerate(estrutura) if marcador in item["texto"])
                for marcador in ordem]
     assert indices == sorted(indices)
+
+
+def test_reconstrucao_agrupa_callout_antes_da_continuacao():
+    spans = []
+
+    def adicionar(bloco, linha, texto, x, y, x1, fonte="Cambria", tamanho=9, flags=4):
+        spans.append({
+            "pagina": 0,
+            "altura_pagina": 842,
+            "bloco": bloco,
+            "linha": linha,
+            "x": x,
+            "y": y,
+            "x1": x1,
+            "y1": y + tamanho,
+            "texto": texto,
+            "fonte": fonte,
+            "tamanho": tamanho,
+            "flags": flags,
+        })
+
+    adicionar(1, 0, "VOCÊ O CONHECE?", 62, 533, 221, "Cambria-Bold", 18.8, 20)
+    adicionar(
+        2, 0,
+        "A matemática e escritora inglesa Ada Lovelace foi a primeira pessoa "
+        "a escrever um algoritmo",
+        152, 563, 518,
+    )
+    adicionar(
+        2, 1,
+        "para computador. Em sua homenagem, foi atribuído o seu nome à uma linguagem de",
+        152, 576, 518,
+    )
+    adicionar(2, 2, "programação. A linguagem ", 152, 590, 261)
+    adicionar(2, 6, "Ada", 262, 590, 279)
+    adicionar(2, 3, " foi criada em 1982, teve como base o ", 277, 590, 434)
+    adicionar(2, 7, "Cobol", 435, 590, 459)
+    adicionar(2, 4, " e o ", 458, 590, 475)
+    adicionar(2, 8, "Basic", 477, 590, 499)
+    adicionar(2, 5, " e foi", 497, 590, 518)
+    adicionar(2, 9, "referência para a criação da linguagem de programação ", 152, 603, 376)
+    adicionar(2, 11, "Ruby", 377, 603, 399)
+    adicionar(2, 10, " (PORTAL EBC). Saiba mais na", 397, 603, 518)
+    adicionar(2, 12, "matéria: <", 152, 617, 205)
+    adicionar(2, 13, "http://www.ebc.com.br/tecnologia/2015/03/conheca-historia-da-ada-lovelace-",
+             205, 617, 518)
+    adicionar(2, 14, "primeira-programadora-do-mundo", 152, 630, 288)
+    adicionar(2, 15, ">.", 288, 630, 295)
+    adicionar(
+        3, 0,
+        "A partir de agora, vamos observar que a evolução das gerações dos "
+        "computadores terá inúmeras consequências,",
+        62, 702, 533,
+    )
+    adicionar(
+        3, 1,
+        "não somente no impacto positivo do poderio de processamento, quanto "
+        "também nas funcionalidades exportadas",
+        62, 716, 533,
+    )
+
+    estrutura = reconstruir_estrutura_pdf(spans)
+    indice_titulo = next(i for i, item in enumerate(estrutura)
+                         if item["texto"] == "VOCÊ O CONHECE?")
+    indice_caixa = next(i for i, item in enumerate(estrutura)
+                        if "A matemática e escritora inglesa Ada Lovelace" in item["texto"])
+    indice_continuacao = next(i for i, item in enumerate(estrutura)
+                              if item["texto"].startswith("A partir de agora"))
+
+    assert estrutura[indice_titulo]["tipo"] == "titulo"
+    assert indice_titulo < indice_caixa < indice_continuacao
+    texto_caixa = estrutura[indice_caixa]["texto"]
+    assert "Ada foi criada em 1982" in texto_caixa
+    assert "PORTAL EBC" in texto_caixa
+    assert "primeira-programadora-do-mundo" in texto_caixa
 
 
 def test_pdf_sintetico_preserva_estrutura_estilos_e_ordem(tmp_path):

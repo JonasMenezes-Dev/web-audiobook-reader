@@ -226,11 +226,30 @@ function splitIntoSentences(text) {
     const blocks = text.split(/\n\s*\n+/).map(b => b.replace(/\s+/g, ' ').trim()).filter(Boolean);
     const out = [];
     for (const block of blocks) {
-        // Divide por fim de frase mantendo a pontuação
-        const parts = block.match(/[^.!?…]+[.!?…]+(?:['"”’)]*)|[^.!?…]+$/g) || [block];
+        const sentinel = '\u0000';
+        const ellipses = [];
+        let protectedBlock = block.replace(/\.{2,}|…+/g, match => {
+            const marker = `${sentinel}E${ellipses.length}${sentinel}`;
+            ellipses.push(match);
+            return marker;
+        });
+
+        // Protege o marcador de seção inicial e pontos internos de números.
+        protectedBlock = protectedBlock.replace(
+            /^(\s*\d+(?:\.\d+)*)(\.)(?=\s+\w)/,
+            (_, number) => number.replace(/\./g, sentinel) + sentinel
+        );
+        protectedBlock = protectedBlock.replace(/(\d)\.(?=\d)/g, `$1${sentinel}`);
+
+        // A pontuação encerra a frase, mas aspas/fechamentos continuam nela.
+        const parts = protectedBlock.match(
+            /[^.!?…]+[.!?]+(?:["'”’»)\]}]*)|[^.!?…]+$/g
+        ) || [];
         for (const p of parts) {
-            const s = p.trim();
-            if (s.length > 2) out.push(s);
+            const s = p.trim()
+                .replace(/\u0000E(\d+)\u0000/g, (_, index) => ellipses[Number(index)])
+                .replace(/\u0000/g, '.');
+            if (s) out.push(s);
         }
     }
     return out;
