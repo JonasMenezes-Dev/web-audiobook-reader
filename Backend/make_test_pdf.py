@@ -42,7 +42,7 @@ def chrome(c, page_no):
     c.setFillGray(0)
 
 
-def two_columns(c, left_flowables, right_flowables, top, height, left_x, right_x, col_w):
+def two_columns(c, left_flowables, right_flowables, top, left_x, right_x, col_w):
     """Desenha duas colunas independentes (ordem de leitura: esquerda -> direita)."""
     for x, flowables in ((left_x, left_flowables), (right_x, right_flowables)):
         y = top - 0.4 * cm
@@ -52,7 +52,7 @@ def two_columns(c, left_flowables, right_flowables, top, height, left_x, right_x
 
 def draw_para(c, para, x, y, max_w):
     """Desenha um Paragraph em (x, y) e devolve o novo y (abaixo dele)."""
-    _w, h = para.wrap(max_w, H)
+    _, h = para.wrap(max_w, H)
     para.drawOn(c, x, y - h)
     return y - h
 
@@ -129,7 +129,7 @@ def build():
     right = [Paragraph("DIREITA A: primeiro bloco da coluna direita.", BODY),
              Paragraph("DIREITA B: segundo bloco da coluna direita.", BODY),
              Paragraph("DIREITA C: terceiro bloco da coluna direita.", BODY)]
-    two_columns(c, left, right, top, H - 8 * cm, left_x, right_x, col_w)
+    two_columns(c, left, right, top, left_x, right_x, col_w)
     c.showPage()
 
     c.save()

@@ -166,7 +166,7 @@ def reconstruir_estrutura_pdf(blocos):
                 or espaco_vertical > tamanho_medio * 0.8
             )
 
-        if novo_paragrafo:
+        if atual is None or novo_paragrafo:
             if atual:
                 paragrafos.append(atual)
             atual = {
