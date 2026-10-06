@@ -3,3 +3,7 @@ uvicorn[standard]
 pypdf
 mysql-connector-python
 
+# Desenvolvimento / testes
+pytest
+reportlab
+PyMuPDF
