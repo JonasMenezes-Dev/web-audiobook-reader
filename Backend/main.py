@@ -565,6 +565,246 @@ def dividir_em_frases(texto):
                 frases.append(s)
     return frases
 
+
+def classificar_conteudo(elemento, visualmente_separado=False, contexto=None):
+    """Classifica uma frase usando evidências do texto e da estrutura vizinha."""
+    texto = elemento.strip()
+    contexto = contexto or {}
+    sinais = []
+
+    def adicionar_sinal(codigo, pontos):
+        sinais.append({"codigo": codigo, "pontos": pontos})
+
+    urls = re.findall(r"(?:https?://|www\.)[^\s<>()]+", texto, re.IGNORECASE)
+    if urls:
+        adicionar_sinal("url_explicita", 2)
+
+    flexcil = re.search(r"\bflexcil\b", texto, re.IGNORECASE)
+    if flexcil:
+        adicionar_sinal("marca_flexcil", 2)
+    if re.search(
+        r"\bthis\s+document\s+has\s+been\s+modified\s+with\s+flexcil\b",
+        texto,
+        re.IGNORECASE,
+    ):
+        adicionar_sinal("marca_modificacao_flexcil", 5)
+    if re.search(
+        r"\bthe\s+smart\s+study\s+toolkit\b",
+        texto,
+        re.IGNORECASE,
+    ):
+        adicionar_sinal("slogan_smart_study_toolkit", 4)
+    if re.search(
+        r"\bpdf\s*,\s*annotate\s*,\s*note\b",
+        texto,
+        re.IGNORECASE,
+    ):
+        adicionar_sinal("slogan_pdf_annotate_note", 2)
+    if re.search(r"\bflexcil\.com\b", texto, re.IGNORECASE):
+        adicionar_sinal("dominio_flexcil", 1)
+    if contexto.get("repetido_em_paginas"):
+        adicionar_sinal("bloco_repetido_em_paginas", 3)
+
+    sinais_promocionais = (
+        (
+            "baixar_instalar_aplicativo",
+            r"\b(?:baixe|baixar|download\s+(?:do|de|o)?|instale|instalar)"
+            r"\s+(?:(?:o|nosso|nosso\s+proprio)\s+)?(?:aplicativo|app)\b",
+            5,
+        ),
+        (
+            "acessar_site_proprio",
+            r"\b(?:acesse|visite)\s+nosso\s+site\b",
+            4,
+        ),
+        (
+            "acessar_site",
+            r"\b(?:acesse|visite)\s+(?:o\s+)?site\b",
+            3,
+        ),
+        (
+            "ler_no_aplicativo",
+            r"\bleia\b.{0,60}\bno\s+(?:(?:nosso|meu)\s+)?(?:aplicativo|app)\b",
+            4,
+        ),
+        (
+            "aplicativo_disponivel",
+            r"\bdispon[ií]vel\s+no\s+(?:aplicativo|app)\b",
+            4,
+        ),
+        (
+            "conhecer_aplicativo",
+            r"\bconhe[cç]a\s+(?:nosso\s+)?(?:aplicativo|app)\b",
+            5,
+        ),
+        ("chamada_compra_livro", r"\bcompre\s+agora\s+e\s+leia\b", 4),
+    )
+    for codigo, padrao, pontos in sinais_promocionais:
+        if re.search(padrao, texto, re.IGNORECASE):
+            adicionar_sinal(codigo, pontos)
+
+    if re.search(r"\bnosso\s+(?:aplicativo|app)\b", texto, re.IGNORECASE):
+        adicionar_sinal("aplicativo_proprio", 2)
+    if re.search(r"\bbaixe\s+agora\b", texto, re.IGNORECASE):
+        adicionar_sinal("chamada_agora", 2)
+    if re.search(r"\bcontinue\s+sua\s+leitura\b", texto, re.IGNORECASE):
+        adicionar_sinal("continue_leitura", 2)
+    if re.search(r"\bmilhares\s+de\s+livros\b", texto, re.IGNORECASE):
+        adicionar_sinal("beneficio_promocional", 2)
+    if re.search(r"\bclique\s+aqui\b", texto, re.IGNORECASE):
+        adicionar_sinal("clique_aqui", 2)
+    if re.search(r"\bsaiba\s+mais\b", texto, re.IGNORECASE):
+        adicionar_sinal("saiba_mais", 1)
+    if visualmente_separado and len(texto) <= 100:
+        adicionar_sinal("curto_e_visualmente_separado", 1)
+
+    if contexto.get("catalogo_editorial"):
+        adicionar_sinal("bloco_catalogo_editorial", 6)
+        for codigo in contexto.get("sinais_catalogo", []):
+            adicionar_sinal(codigo, 1)
+
+    score = sum(sinal["pontos"] for sinal in sinais)
+    texto_sem_pontuacao_final = texto.rstrip(".,;:!?)]}\"'")
+    url_isolada = bool(
+        re.fullmatch(
+            r"(?:https?://|www\.)[^\s<>()]+",
+            texto_sem_pontuacao_final,
+            re.IGNORECASE,
+        )
+    )
+    codigos_sinal = {sinal["codigo"] for sinal in sinais}
+    assinatura_flexcil = (
+        "marca_modificacao_flexcil" in codigos_sinal
+        or (
+            "marca_flexcil" in codigos_sinal
+            and "slogan_smart_study_toolkit" in codigos_sinal
+        )
+        or (
+            "marca_flexcil" in codigos_sinal
+            and "bloco_repetido_em_paginas" in codigos_sinal
+        )
+    )
+    if score >= 5 and flexcil and assinatura_flexcil:
+        tipo = "LIXO_TECNICO"
+    elif url_isolada:
+        tipo = "URL"
+    elif score >= 6:
+        tipo = "PROPAGANDA"
+    else:
+        tipo = "NORMAL"
+
+    return {
+        "tipo": tipo,
+        "score": score,
+        "sinais": sinais,
+        "ignorar": tipo in ("PROPAGANDA", "LIXO_TECNICO", "URL"),
+    }
+
+
+def _contextos_estrutura_para_leitura(estrutura):
+    """Detecta blocos técnicos repetidos e janelas de catálogo editorial."""
+    por_texto = {}
+    for indice, elemento in enumerate(estrutura):
+        texto = re.sub(r"\s+", " ", elemento["texto"]).strip().casefold()
+        pagina = elemento.get("pagina")
+        if texto and pagina is not None:
+            por_texto.setdefault(texto, {}).setdefault(pagina, []).append(indice)
+
+    repetidos = set()
+    for paginas in por_texto.values():
+        if len(paginas) > 1:
+            repetidos.update(indice for indices in paginas.values() for indice in indices)
+
+    textos = [elemento["texto"] for elemento in estrutura]
+    ctas = [
+        indice for indice, texto in enumerate(textos)
+        if re.search(r"\bcompre\s+agora\s+e\s+leia\b", texto, re.IGNORECASE)
+    ]
+    isbn_indices = [
+        indice for indice, texto in enumerate(textos)
+        if re.search(r"\b(?:97[89])?\d{9,12}\b", texto)
+    ]
+    paginas_indices = [
+        indice for indice, texto in enumerate(textos)
+        if re.search(r"\b\d{2,4}\s+p[aá]ginas?\b", texto, re.IGNORECASE)
+    ]
+    catalogo = {}
+    for cta in ctas:
+        candidatos_isbn = [indice for indice in isbn_indices if abs(indice - cta) <= 12]
+        candidatos_paginas = [indice for indice in paginas_indices if abs(indice - cta) <= 12]
+        if not candidatos_isbn or not candidatos_paginas:
+            continue
+
+        isbn = min(candidatos_isbn, key=lambda indice: abs(indice - cta))
+        total_paginas = min(candidatos_paginas, key=lambda indice: abs(indice - cta))
+        inicio = max(0, min(cta, isbn, total_paginas) - 2)
+        fim = min(len(estrutura), max(cta, isbn, total_paginas) + 2)
+        pagina_cta = estrutura[cta].get("pagina")
+        for indice in range(inicio, fim):
+            pagina_elemento = estrutura[indice].get("pagina")
+            if (
+                pagina_cta is not None
+                and pagina_elemento is not None
+                and pagina_elemento < pagina_cta - 1
+            ):
+                continue
+            catalogo.setdefault(indice, set()).update(
+                ("cta_compre_agora_e_leia", "isbn_proximo", "numero_paginas_proximo")
+            )
+
+    contextos = []
+    for indice in range(len(estrutura)):
+        contextos.append({
+            "repetido_em_paginas": indice in repetidos,
+            "catalogo_editorial": indice in catalogo,
+            "sinais_catalogo": sorted(catalogo.get(indice, set())),
+        })
+    return contextos
+
+
+def filtrar_estrutura_para_leitura(estrutura):
+    """Divide a estrutura em frases e filtra propaganda/lixo técnico."""
+    frases_originais = []
+    classificacoes = []
+    frases_filtradas = []
+    contextos = _contextos_estrutura_para_leitura(estrutura)
+
+    for indice, elemento in enumerate(estrutura):
+        frases_elemento = dividir_em_frases(elemento["texto"])
+        visualmente_separado = (
+            len(frases_elemento) == 1 and len(elemento["texto"].strip()) <= 100
+        )
+        classificacao_elemento = classificar_conteudo(
+            elemento["texto"],
+            visualmente_separado=visualmente_separado,
+            contexto=contextos[indice],
+        )
+        for frase in frases_elemento:
+            classificacao = (
+                classificacao_elemento
+                if classificacao_elemento["tipo"] == "LIXO_TECNICO"
+                else classificar_conteudo(
+                    frase,
+                    visualmente_separado=visualmente_separado,
+                    contexto=contextos[indice],
+                )
+            )
+            frases_originais.append(frase)
+            classificacoes.append({
+                "texto": frase,
+                "pagina": elemento.get("pagina"),
+                **classificacao,
+            })
+            if not classificacao["ignorar"]:
+                frases_filtradas.append(frase)
+
+    return {
+        "frases_originais": frases_originais,
+        "frases_filtradas": frases_filtradas,
+        "classificacoes": classificacoes,
+    }
+
+
 class DadosProgresso(BaseModel):
     id_Livro: str
     indice_frase: int
@@ -605,13 +845,17 @@ async def processar_pdf(file: UploadFile = File()):
         blocos = extrair_blocos_pdf(contents)
         estrutura = reconstruir_estrutura_pdf(blocos)
         texto_limpo = "\n\n".join(item["texto"] for item in estrutura)
-        sentences = dividir_em_frases(texto_limpo)
+        resultado_leitura = filtrar_estrutura_para_leitura(estrutura)
+        sentences = resultado_leitura["frases_filtradas"]
 
         return {
             "filename": file.filename,
             "total_frases": len(sentences),
+            "total_frases_originais": len(resultado_leitura["frases_originais"]),
             "texto_limpo": texto_limpo,
             "sentences": sentences,
+            "sentences_original": resultado_leitura["frases_originais"],
+            "classificacoes_conteudo": resultado_leitura["classificacoes"],
             "estrutura": estrutura,
         }
     except Exception as e:

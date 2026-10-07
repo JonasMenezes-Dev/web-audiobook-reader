@@ -53,13 +53,17 @@ for _fn in ("limpar_texto_pdf", "_detectar_cabecalho_rodape",
             "_parece_titulo", "dividir_em_frases", "extrair_blocos_pdf",
             "ordenar_blocos", "reconstruir_estrutura_pdf",
             "_detectar_margens_blocos", "_ordenar_linhas_colunas",
-            "_texto_da_linha", "_span_negrito", "_trechos_da_linha"):
+            "_texto_da_linha", "_span_negrito", "_trechos_da_linha",
+            "classificar_conteudo", "_contextos_estrutura_para_leitura",
+            "filtrar_estrutura_para_leitura"):
     exec(_extract_fn(_src, _fn), _ns)
 
 limpar_texto_pdf = _ns["limpar_texto_pdf"]
 dividir_em_frases = _ns["dividir_em_frases"]
 extrair_blocos_pdf = _ns["extrair_blocos_pdf"]
 reconstruir_estrutura_pdf = _ns["reconstruir_estrutura_pdf"]
+classificar_conteudo = _ns["classificar_conteudo"]
+filtrar_estrutura_para_leitura = _ns["filtrar_estrutura_para_leitura"]
 
 SPLITTER_CASES = [
     (
@@ -239,6 +243,200 @@ def test_numeracao_datas_e_valores_preservados_na_ordem():
         "O número é 10.000.",
     ]
     assert _ns["_parece_titulo"]("2.4.5 Interrupções")
+
+
+@pytest.mark.parametrize(
+    ("texto", "tipo", "ignorar"),
+    [
+        ("Baixe nosso aplicativo agora.", "PROPAGANDA", True),
+        ("Baixe o aplicativo e continue sua leitura.", "PROPAGANDA", True),
+        ("https://exemplo.com", "URL", True),
+        ("www.exemplo.com", "URL", True),
+        (
+            "This Document has been modified with Flexcil app (Android) "
+            "https://www.flexcil.com",
+            "LIXO_TECNICO",
+            True,
+        ),
+        (
+            "Flexcil - The Smart Study Toolkit & PDF, Annotate, Note",
+            "LIXO_TECNICO",
+            True,
+        ),
+        ("https://www.flexcil.com", "URL", True),
+        ("Leia também no nosso aplicativo.", "PROPAGANDA", True),
+        ("Ada Lovelace foi uma matemática inglesa.", "NORMAL", False),
+        ("A linguagem Ada foi criada em 1982.", "NORMAL", False),
+        ("Para mais informações, consulte a bibliografia.", "NORMAL", False),
+        (
+            "Para saber mais sobre Ada Lovelace, consulte https://exemplo.com.",
+            "NORMAL",
+            False,
+        ),
+        ("O conteúdo do site explica o contexto histórico.", "NORMAL", False),
+        ("A visão das plantas", "NORMAL", False),
+        ("O aplicativo foi desenvolvido para organizar os estudos.", "NORMAL", False),
+        (
+            "A pesquisa está disponível em https://exemplo.com para consulta.",
+            "NORMAL",
+            False,
+        ),
+    ],
+)
+def test_classificador_conteudo(texto, tipo, ignorar):
+    resultado = classificar_conteudo(texto)
+
+    assert resultado["tipo"] == tipo
+    assert resultado["ignorar"] is ignorar
+    assert isinstance(resultado["score"], int)
+    assert isinstance(resultado["sinais"], list)
+
+
+def test_pipeline_estrutura_splitter_filtro_preserva_ordem_e_originais():
+    estrutura = [
+        {"tipo": "paragrafo", "texto": "Ada Lovelace foi uma matemática inglesa."},
+        {"tipo": "paragrafo", "texto": "Baixe nosso aplicativo agora."},
+        {"tipo": "paragrafo", "texto": "A linguagem Ada foi criada em 1982."},
+    ]
+
+    resultado = filtrar_estrutura_para_leitura(estrutura)
+
+    assert resultado["frases_originais"] == [
+        "Ada Lovelace foi uma matemática inglesa.",
+        "Baixe nosso aplicativo agora.",
+        "A linguagem Ada foi criada em 1982.",
+    ]
+    assert resultado["frases_filtradas"] == [
+        "Ada Lovelace foi uma matemática inglesa.",
+        "A linguagem Ada foi criada em 1982.",
+    ]
+    assert [item["tipo"] for item in resultado["classificacoes"]] == [
+        "NORMAL",
+        "PROPAGANDA",
+        "NORMAL",
+    ]
+    assert estrutura[1]["texto"] == "Baixe nosso aplicativo agora."
+
+
+@pytest.mark.parametrize(
+    "livro",
+    [
+        [
+            "Crime e Castigo",
+            "Dostoiévski, Fiódor",
+            "9788588808850",
+            "608 páginas",
+            "Compre agora e leia",
+            "Nova tradução direto do russo, em edição especial.",
+        ],
+        [
+            "O espelho e a luz",
+            "Hilary Mantel",
+            "9786559212345",
+            "912 páginas",
+            "Compre agora e leia",
+            "Uma narrativa histórica em edição especial.",
+        ],
+    ],
+)
+def test_catalogo_editorial_e_classificado_com_contexto(livro):
+    estrutura = [{"tipo": "paragrafo", "texto": texto, "pagina": 8} for texto in livro]
+
+    resultado = filtrar_estrutura_para_leitura(estrutura)
+
+    assert resultado["frases_filtradas"] == []
+    assert all(
+        item["tipo"] == "PROPAGANDA"
+        and item["score"] >= 6
+        and item["ignorar"]
+        for item in resultado["classificacoes"]
+    )
+
+
+def test_cta_de_compra_sem_contexto_de_catalogo_nao_e_suficiente():
+    resultado = filtrar_estrutura_para_leitura([
+        {"tipo": "paragrafo", "texto": "Compre agora e leia."},
+    ])
+
+    assert resultado["classificacoes"][0]["tipo"] == "NORMAL"
+    assert resultado["frases_filtradas"] == ["Compre agora e leia."]
+
+
+def test_url_do_flexcil_isolada_nao_vira_propaganda_ou_lixo_tecnico():
+    resultado = classificar_conteudo(
+        "https://www.flexcil.com",
+        visualmente_separado=True,
+    )
+
+    assert resultado["tipo"] == "URL"
+    assert resultado["tipo"] != "LIXO_TECNICO"
+    assert resultado["tipo"] != "PROPAGANDA"
+
+
+def test_flexcil_repetido_em_paginas_e_removido_sem_descartar_url_isolada():
+    marca = (
+        "This Document has been modified with Flexcil app (Android)"
+    )
+    estrutura = [
+        {"tipo": "paragrafo", "texto": "A visão das plantas", "pagina": 0},
+        {"tipo": "paragrafo", "texto": marca, "pagina": 0},
+        {"tipo": "paragrafo", "texto": "O jardim permanecia em silêncio.", "pagina": 0},
+        {"tipo": "paragrafo", "texto": marca, "pagina": 1},
+        {"tipo": "paragrafo", "texto": "A manhã chegou devagar.", "pagina": 1},
+    ]
+
+    resultado = filtrar_estrutura_para_leitura(estrutura)
+
+    assert [item["tipo"] for item in resultado["classificacoes"]] == [
+        "NORMAL",
+        "LIXO_TECNICO",
+        "NORMAL",
+        "LIXO_TECNICO",
+        "NORMAL",
+    ]
+    assert resultado["frases_filtradas"] == [
+        "A visão das plantas",
+        "O jardim permanecia em silêncio.",
+        "A manhã chegou devagar.",
+    ]
+    assert resultado["classificacoes"][1]["pagina"] == 0
+    assert resultado["classificacoes"][3]["pagina"] == 1
+
+
+def test_filtro_remove_promocao_e_lixo_mantendo_ordem_dos_normais():
+    marca = "Flexcil - The Smart Study Toolkit & PDF, Annotate, Note"
+    estrutura = [
+        {"tipo": "paragrafo", "texto": "A visão das plantas"},
+        {"tipo": "paragrafo", "texto": "Crime e Castigo"},
+        {"tipo": "paragrafo", "texto": "Dostoiévski, Fiódor"},
+        {"tipo": "paragrafo", "texto": "9788588808850"},
+        {"tipo": "paragrafo", "texto": "608 páginas"},
+        {"tipo": "paragrafo", "texto": "Compre agora e leia"},
+        {"tipo": "paragrafo", "texto": "Nova tradução direto do russo."},
+        {"tipo": "paragrafo", "texto": "A narrativa prossegue no jardim"},
+        {"tipo": "paragrafo", "texto": marca},
+        {"tipo": "paragrafo", "texto": "O silêncio voltou à casa."},
+    ]
+
+    resultado = filtrar_estrutura_para_leitura(estrutura)
+
+    assert [item["tipo"] for item in resultado["classificacoes"]] == [
+        "NORMAL",
+        "PROPAGANDA",
+        "PROPAGANDA",
+        "PROPAGANDA",
+        "PROPAGANDA",
+        "PROPAGANDA",
+        "PROPAGANDA",
+        "NORMAL",
+        "LIXO_TECNICO",
+        "NORMAL",
+    ]
+    assert resultado["frases_filtradas"] == [
+        "A visão das plantas",
+        "A narrativa prossegue no jardim",
+        "O silêncio voltou à casa.",
+    ]
 
 
 def test_extracao_estrutural_preserva_posicao_e_formatacao():
