@@ -77,25 +77,9 @@ async function loadPDF(file) {
         // CORRIGIDO: o backend envia 'sentences' (não 'texto_limpo').
         processText(data.texto_limpo || data.sentences.join(' '), data.filename, data.sentences);
     } catch (err) {
-        console.log('Backend failed, fallback to local PDF.js:', err.message);
-        // Fallback local: extração por blocos ordenados por posição (evita itálico fora de ordem).
-        try {
-            const arrayBuffer = await file.arrayBuffer();
-            const loadingTask = pdfjsLib.getDocument({ data: arrayBuffer });
-            const pdf = await loadingTask.promise;
-            const pages = [];
-            for (let i = 1; i <= pdf.numPages; i++) {
-                const page = await pdf.getPage(i);
-                const content = await page.getTextContent();
-                pages.push(content.items);
-            }
-            const fullText = buildTextFromItems(pages);
-            if (fullText.trim().length < 5) throw new Error("PDF sem texto extraível.");
-            processText(fullText, file.name);
-        } catch (localErr) {
-            console.error('Local PDF.js failed:', localErr);
-            alert("Erro ao ler o PDF: " + localErr.message);
-        }
+        console.error('PDF backend request failed:', err);
+        alert('Não foi possível processar o PDF pelo servidor. Verifique se o backend está disponível e tente novamente.');
+        return;
     }
 }
 
