@@ -10,7 +10,8 @@ const STORAGE_KEY = 'audiolivro_v1';
 
 // Em produção, substitua pela URL pública do backend hospedado.
 // O endereço local continua como padrão para desenvolvimento no PC.
-const API_BASE_URL = window.AUDIOLIVRO_API_URL || 'http://127.0.0.1:8000';
+const API_BASE_URL = window.AUDIOLIVRO_API_URL ||
+    (['localhost', '127.0.0.1'].includes(window.location.hostname) ? 'http://127.0.0.1:8000' : '');
 
 // Velocidades disponíveis. 1.25x entra na mesma estrutura das demais.
 const SPEEDS = [1.0, 1.25, 1.5, 2.0, 0.7];
@@ -64,6 +65,10 @@ document.getElementById('file-input').onchange = e => {
 
 
 async function loadPDF(file) {
+    if (!API_BASE_URL) {
+        alert('O servidor de PDFs ainda não foi configurado. Configure a URL pública em config.js.');
+        return;
+    }
     const formData = new FormData();
     formData.append('file', file);
     try {
