@@ -8,6 +8,10 @@ const DEBUG = true;
 
 const STORAGE_KEY = 'audiolivro_v1';
 
+// Em produção, substitua pela URL pública do backend hospedado.
+// O endereço local continua como padrão para desenvolvimento no PC.
+const API_BASE_URL = window.AUDIOLIVRO_API_URL || 'http://127.0.0.1:8000';
+
 // Velocidades disponíveis. 1.25x entra na mesma estrutura das demais.
 const SPEEDS = [1.0, 1.25, 1.5, 2.0, 0.7];
 
@@ -63,7 +67,7 @@ async function loadPDF(file) {
     const formData = new FormData();
     formData.append('file', file);
     try {
-        const response = await fetch('http://127.0.0.1:8000/upload-pdf/', {
+        const response = await fetch(`${API_BASE_URL}/upload-pdf/`, {
             method: 'POST',
             body: formData
         });
@@ -332,9 +336,8 @@ function saveProgress() {
         rate: state.rate,
         date: Date.now()
     };
+    // O progresso fica somente neste navegador/dispositivo.
     localStorage.setItem(`${STORAGE_KEY}_${state.title}`, JSON.stringify(data));
-
-    salvarNoMySQL(state.title, state.currentIdx); // salva no MySQL também
 }
 
 
@@ -460,30 +463,3 @@ function handleProgClick(e) {
     if (state.playing) speak();
 }
 
-//CONEXAO COM O BACKEND PARA SALVAR PROGRESSO NO MYSQL (EXEMPLO SIMPLIFICADO, REQUER BACKEND CONFIGURADO)
-async function salvarNoMySQL(idLivro, indice) {
-    console.log('DADOS ENVIADOS:', {
-        id_Livro: idLivro,
-        tipo_id: typeof idLivro,
-        indice_frase: indice,
-        tipo_indice: typeof indice
-    });
-
-    try {
-        const url = 'http://127.0.0.1:8000/salvar';
-
-        await fetch(url, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-                id_Livro: idLivro,
-                indice_frase: indice
-            })
-        });
-        console.log("Salvo no MySQL");
-    } catch (error) {
-        console.warn('Servidor python offline. Progresso salvo apenas no navegador');
-    }
-}
