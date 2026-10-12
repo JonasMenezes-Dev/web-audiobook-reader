@@ -50,32 +50,61 @@ function getBestVoice() {
 window.onload = loadRecents;
 
 // Gerenciador de arquivos
-document.getElementById('file-input').onchange = e => {
+const fileInput = document.getElementById('file-input');
+
+fileInput.onchange = async e => {
     const file = e.target.files[0];
     if (!file) return;
 
-    if (file.type === 'application/pdf') {
-        loadPDF(file);
-    } else if (file.type === 'text/plain') {
-        loadTXT(file);
-    } else {
-        alert('Formato não suportado. Use PDF ou TXT.');
+    try {
+        if (file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf')) {
+            await loadPDF(file);
+        } else if (file.type === 'text/plain' || file.name.toLowerCase().endsWith('.txt')) {
+            loadTXT(file);
+        } else {
+            alert('Formato não suportado. Use PDF ou TXT.');
+        }
+    } finally {
+        // Permite selecionar o mesmo arquivo novamente caso seja necessário.
+        fileInput.value = '';
     }
 };
 
+function showLoading(title, message) {
+    const overlay = document.getElementById('loading-overlay');
+    if (!overlay) return;
+    document.getElementById('loading-title').textContent = title;
+    document.getElementById('loading-message').textContent = message;
+    overlay.hidden = false;
+    document.body.setAttribute('aria-busy', 'true');
+}
+
+function hideLoading() {
+    const overlay = document.getElementById('loading-overlay');
+    if (overlay) overlay.hidden = true;
+    document.body.removeAttribute('aria-busy');
+}
 
 async function loadPDF(file) {
     if (!API_BASE_URL) {
         alert('O servidor de PDFs ainda não foi configurado. Configure a URL pública em config.js.');
         return;
     }
+
     const formData = new FormData();
     formData.append('file', file);
+    showLoading('Preparando seu audiolivro', 'Enviando o PDF e extraindo o texto. Arquivos grandes podem levar um pouco mais de tempo.');
+
     try {
         const response = await fetch(`${API_BASE_URL}/upload-pdf/`, {
             method: 'POST',
             body: formData
         });
+
+        if (!response.ok) {
+            throw new Error(`O servidor respondeu com status ${response.status}`);
+        }
+
         const data = await response.json();
         if (data.error) {
             throw new Error(data.error);
@@ -83,23 +112,39 @@ async function loadPDF(file) {
         if (!data.sentences || !data.sentences.length) {
             throw new Error('Backend não retornou frases utilizáveis.');
         }
-        // CORRIGIDO: o backend envia 'sentences' (não 'texto_limpo').
-        processText(data.texto_limpo || data.sentences.join(' '), data.filename, data.sentences);
+
+        // O backend envia 'sentences'; mantemos a lógica de extração intacta.
+        processText(data.texto_limpo || data.sentences.join(' '), data.filename || file.name, data.sentences);
     } catch (err) {
         console.error('PDF backend request failed:', err);
-        alert('Não foi possível processar o PDF pelo servidor. Verifique se o backend está disponível e tente novamente.');
-        return;
+        alert('Não foi possível processar o PDF pelo servidor. Verifique sua conexão e tente novamente.');
+    } finally {
+        hideLoading();
     }
 }
 
-
 function loadTXT(file) {
+    showLoading('Abrindo seu texto', 'Estamos preparando o conteúdo para leitura.');
     const reader = new FileReader();
-    reader.onload = e => processText(e.target.result, file.name);
-    reader.onerror = () => alert("Erro ao ler o arquivo TXT.");
+
+    reader.onload = e => {
+        try {
+            processText(e.target.result, file.name);
+        } catch (err) {
+            console.error('TXT processing failed:', err);
+            alert('Não foi possível abrir este arquivo TXT.');
+        } finally {
+            hideLoading();
+        }
+    };
+
+    reader.onerror = () => {
+        hideLoading();
+        alert('Erro ao ler o arquivo TXT.');
+    };
+
     reader.readAsText(file);
 }
-
 
 // =====================================================================
 // Extração local estruturada (fallback). Ordena por posição X/Y para que
