@@ -587,8 +587,8 @@ body {
 }
 
 .loading-progress {
-    height: 4px;
-    margin: 1.25rem 0 0.85rem;
+    height: 6px;
+    margin: 1.25rem 0 0.35rem;
     overflow: hidden;
     border-radius: 99px;
     background: var(--border);
@@ -596,11 +596,28 @@ body {
 
 .loading-progress span {
     display: block;
-    width: 35%;
+    width: 0%;
     height: 100%;
     border-radius: inherit;
     background: var(--accent);
+    transition: width 160ms ease;
+}
+
+.loading-progress.is-indeterminate span {
+    width: 35% !important;
     animation: audiolivro-progress 1.4s ease-in-out infinite;
+}
+
+.loading-percent {
+    margin-bottom: 0.75rem;
+    color: var(--text);
+    font-size: 0.85rem;
+    font-variant-numeric: tabular-nums;
+    font-weight: 600;
+}
+
+.loading-percent[hidden] {
+    display: none !important;
 }
 
 .loading-card small {
