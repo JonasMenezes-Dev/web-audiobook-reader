@@ -1,11 +1,9 @@
 import re
 from typing import Any
 
-import mysql.connector
 import uvicorn
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
 
 # Importação opcional do PyMuPDF. A extração antiga continua disponível abaixo
 # para compatibilidade e diagnóstico.
@@ -35,12 +33,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-db_config = {
-    'host': 'localhost',
-    'user': "root",
-    'password': "", # Verifique se sua senha é vazia mesmo
-    'database': "audiolivro_db"
-}
+
 
 
 def extrair_blocos_pdf(caminho_pdf):
@@ -805,35 +798,9 @@ def filtrar_estrutura_para_leitura(estrutura):
     }
 
 
-class DadosProgresso(BaseModel):
-    id_Livro: str
-    indice_frase: int
-
 @app.get("/")
 def home():
     return {"status": "Online", "msg": "Backend AudioLivro ready"}
-
-@app.post("/salvar")
-def salvar_progresso(progresso: DadosProgresso):
-    conn = None
-    try:
-        conn = mysql.connector.connect(**db_config)
-        cursor = conn.cursor()
-        # CORRIGIDO: nome da tabela para 'progresso'
-        sql = """
-            INSERT INTO progresso (id_Livro, indice_frase)
-            VALUES (%s, %s)
-            ON DUPLICATE KEY UPDATE indice_frase = VALUES(indice_frase)
-            """
-        cursor.execute(sql, (progresso.id_Livro, progresso.indice_frase))
-        conn.commit()
-        cursor.close()
-        return {"status": "success", "message": "Progresso salvo!"}
-    except Exception as e:
-        return {"status": "erro", "detalhes": str(e)}
-    finally:
-        if conn and conn.is_connected():
-            conn.close() # GARANTE que a conexão feche
 
 @app.post("/upload-pdf/")
 async def processar_pdf(file: UploadFile = File()):
