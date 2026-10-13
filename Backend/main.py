@@ -7,24 +7,13 @@ from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-# Importação opcional do PyMuPDF. A extração antiga continua disponível abaixo
-# para compatibilidade e diagnóstico.
+# Importação opcional do PyMuPDF, único extrator usado pelo backend.
 fitz: Any
 try:
     import pymupdf as _fitz
     fitz = _fitz
 except ImportError:
     fitz = None
-
-# Mantido para compatibilidade com a extração antiga e os testes de regressão.
-PdfReader: Any
-try:
-    from pypdf import PdfReader as _PdfReader
-    PdfReader = _PdfReader
-except ImportError:
-    PdfReader = None
-
-PYPDF_AVAILABLE = PdfReader is not None
 
 app = FastAPI()
 
@@ -371,6 +360,9 @@ def _trechos_da_linha(spans):
 
 def limpar_texto_pdf(texto, paginas=None):
     """Limpa o texto bruto do PDF preservando parágrafos.
+
+    Não é usada no fluxo HTTP (a rota usa reconstruir_estrutura_pdf); existe para
+    a suíte de testes e para o diagnóstico do pipeline.
 
     Args:
         texto: texto bruto completo.

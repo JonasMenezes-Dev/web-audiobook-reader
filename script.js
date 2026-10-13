@@ -1,8 +1,4 @@
 
-// Configuração inicial obrigatória do PDF.js
-const pdfjsLib = window['pdfjs-dist/build/pdf'];
-pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
-
 // Altere para true para ver logs detalhados de extração/ordenação/TTS no console.
 const DEBUG = true;
 
@@ -74,7 +70,7 @@ async function loadPDF(file) {
         if (!data.sentences || !data.sentences.length) {
             throw new Error('Backend não retornou frases utilizáveis.');
         }
-        // CORRIGIDO: o backend envia 'sentences' (não 'texto_limpo').
+        // O backend envia 'sentences' já filtradas (propaganda/lixo técnico removidos).
         processText(data.texto_limpo || data.sentences.join(' '), data.filename, data.sentences);
     } catch (err) {
         console.error('PDF backend request failed:', err);
@@ -89,44 +85,6 @@ function loadTXT(file) {
     reader.onload = e => processText(e.target.result, file.name);
     reader.onerror = () => alert("Erro ao ler o arquivo TXT.");
     reader.readAsText(file);
-}
-
-
-// =====================================================================
-// Extração local estruturada (fallback). Ordena por posição X/Y para que
-// itálico/negrito (que o PDF.js entrega como itens separados) permaneçam
-// na posição correta, e agrupa por linha visual usando o parâmetro 'hasEOL'.
-// =====================================================================
-function buildTextFromItems(pages) {
-    const lines = [];
-    for (const items of pages) {
-        let line = '';
-        // Passo 1: reconstrói as linhas na ordem que o PDF.js entrega
-        const rawLines = [];
-        for (const item of items) {
-            if (!item.str) continue;
-            line += item.str;
-            if (item.hasEOL || item.str.endsWith('\n')) {
-                rawLines.push(line);
-                line = '';
-            }
-        }
-        if (line) rawLines.push(line);
-
-        // Passo 2: ordena as linhas pela coordenada Y (topo → base)
-        for (const rl of rawLines) {
-            if (rl.trim()) lines.push(rl.trim());
-        }
-    }
-    // Ordenação global não é possível sem Y por linha; o PDF.js já entrega
-    // as linhas em ordem visual na grande maioria dos casos, mas removemos
-    // cabeçalhos/rodapés repetidos e agrupamos em parágrafos.
-    const cleaned = lines.filter(l => !/^\s*\d{1,4}\s*$/.test(l)); // remove número de página sozinho
-
-    // Junta linhas removendo hifenização de fim de linha (ex: "cami-\nnho")
-    let text = cleaned.join(' ');
-    text = text.replace(/(\w)-\s+(\w)/g, '$1$2');
-    return text;
 }
 
 
@@ -460,15 +418,8 @@ function handleProgClick(e) {
     if (state.playing) speak();
 }
 
-//CONEXAO COM O BACKEND PARA SALVAR PROGRESSO NO MYSQL (EXEMPLO SIMPLIFICADO, REQUER BACKEND CONFIGURADO)
+// Conexão com o backend para salvar o progresso no MySQL.
 async function salvarNoMySQL(idLivro, indice) {
-    console.log('DADOS ENVIADOS:', {
-        id_Livro: idLivro,
-        tipo_id: typeof idLivro,
-        indice_frase: indice,
-        tipo_indice: typeof indice
-    });
-
     try {
         const url = 'http://127.0.0.1:8000/salvar';
 
@@ -482,8 +433,7 @@ async function salvarNoMySQL(idLivro, indice) {
                 indice_frase: indice
             })
         });
-        console.log("Salvo no MySQL");
-    } catch (error) {
+    } catch {
         console.warn('Servidor python offline. Progresso salvo apenas no navegador');
     }
 }

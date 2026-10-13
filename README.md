@@ -6,39 +6,48 @@ O **AudioLivro Pro** é uma aplicação web leve e intuitiva projetada para tran
 
 ##  Funcionalidades
 
-* **Leitura de PDF/TXT:** Extração estrutural de PDFs por posição com PyMuPDF; PDF.js continua como fallback local.
-* **Narração Customizável:** Seleção de vozes (masculinas/femininas) e controle de velocidade.
-* **Progresso Automático:** O app lembra exatamente em qual frase você parou, mesmo após fechar o navegador.
-* **Interface Imersiva:** Design focado na leitura com Dark Mode e destaque da frase atual.
-* **Acessibilidade:** Atalhos e navegação simplificada por sentenças.
+* **Leitura de PDF/TXT:** extração estrutural de PDFs por posição com PyMuPDF; TXT é lido direto no navegador.
+* **Narração Customizável:** seleção de voz e controle de velocidade.
+* **Progresso Automático:** o app lembra em qual frase você parou, mesmo após fechar o navegador.
+* **Interface Imersiva:** design focado na leitura, com Dark Mode e destaque da frase atual.
+* **Acessibilidade:** navegação simplificada por frases (anterior, próxima, clique para saltar).
 
-# Tecnologias & Arquitetura (Full Stack)
-O projeto utiliza uma arquitetura separada entre Cliente e Servidor para garantir performance e persistência robusta:
+# Tecnologias & Arquitetura
+O projeto separa cliente e servidor:
 
-* Frontend: HTML5, CSS3 (Flexbox/Grid), JavaScript ES6+.
-* APIs de Navegador: PDF.js (fallback local) e Web Speech API (síntese de voz).
-* Backend (Motor): FastAPI (Python) — Framework moderno e de alta performance para a construção da API.
+* Frontend: HTML5, CSS3 (Flexbox) e JavaScript ES6+.
+* APIs de Navegador: Web Speech API (síntese de voz).
+* Backend (Motor): FastAPI (Python) — framework de alta performance para a construção da API.
 * Extração PDF: PyMuPDF fornece posição, fonte, tamanho e estilo de cada span; o backend reconstrói linhas, parágrafos e títulos, preservando também a estrutura por trecho.
-* Validação de Dados: Pydantic — Garante que o contrato de dados entre o JS e o Python seja respeitado (evitando erros 422).
-* Banco de Dados: MySQL — Persistência relacional para salvar o progresso de leitura de múltiplos livros.
-* Comunicação: Fetch API com suporte a CORS para integração entre origens.
+* Validação de Dados: Pydantic — garante o contrato de dados entre o JS e o Python (evitando erros 422).
+* Banco de Dados: MySQL — persistência relacional do progresso de leitura.
+* Comunicação: Fetch API com CORS habilitado para integração entre origens.
 
 # Fluxo de Persistência Híbrida
 Diferente de leitores comuns, o AudioLivro Pro trabalha com duas camadas de salvamento:
 
-Local: Utiliza LocalStorage para acesso imediato no navegador.
+* **Local:** utiliza `localStorage` para acesso imediato no navegador (funciona offline).
+* **Remota:** envia via `POST /salvar` o progresso exato (ID do livro e índice da frase) para o servidor Python, que armazena no MySQL. Isso permite que o usuário nunca perca sua posição na leitura, mesmo trocando de dispositivo (em ambiente deployado).
 
-Remota (SQL): Envia via POST o progresso exato (ID do livro e índice da frase) para o servidor Python, que armazena as informações no MySQL. Isso permite que o usuário nunca perca sua posição na leitura, mesmo trocando de dispositivo (em ambiente deployado).
 
+# Como Rodar
 
-# Como Rodar o Backend (Desenvolvimento)
-Para habilitar o salvamento em MySQL no seu ambiente local:
+O passo a passo completo (banco, backend e frontend) está em **[COMO_INICIAR.md](COMO_INICIAR.md)**. Resumo:
 
-1. Acesse a pasta /backend.
-2. Crie um ambiente virtual: python -m venv venv.
-3. Instale as dependências: pip install -r requirements.txt.
-4. Configure suas credenciais do MySQL no arquivo main.py.
-5. Inicie o servidor: uvicorn main:app --reload.
+1. Criar o banco `audiolivro_db` e a tabela `progresso` no MySQL.
+2. Entrar em `Backend/`, criar o ambiente virtual e instalar as dependências:
+
+   ```powershell
+   cd Backend
+   python -m venv venv
+   .\venv\Scripts\Activate.ps1
+   pip install -r requirements.txt
+   ```
+
+3. Ajustar as credenciais do MySQL no bloco `db_config` de `Backend/main.py`.
+4. Subir o servidor: `uvicorn main:app --reload` (porta 8000).
+5. Na raiz do projeto, servir o frontend: `python -m http.server 5500`.
+6. Abrir `http://127.0.0.1:5500/index.html` no navegador.
 
 # Como usar
 
@@ -51,6 +60,11 @@ Para habilitar o salvamento em MySQL no seu ambiente local:
 
 O projeto possui um **PDF de regressão** e uma suíte automatizada que valida a
 extração geométrica, a estrutura e a divisão: `PDF → spans → linhas/parágrafos → frases`.
+Após o splitter, o backend classifica cada frase com score e sinais; URLs isoladas
+e propaganda com evidência suficiente saem da lista enviada ao TTS, enquanto
+`estrutura`, `texto_limpo`, frases originais e classificações permanecem na resposta.
+Os testes também cobrem as classificações conservadoras e a preservação da ordem
+após a filtragem.
 
 ### Gerar o PDF de regressão
 
@@ -81,8 +95,10 @@ python tests/diagnostico.py            # usa o PDF de regressão
 python tests/diagnostico.py meu.pdf    # ou um PDF seu
 ```
 
-Imprime o texto bruto, o texto limpo e cada frase numerada na **ordem exata de
+Imprime o texto bruto, o texto reconstruído e cada frase numerada na **ordem exata de
 envio ao TTS**, permitindo detectar trechos fora de ordem, pulados ou duplicados.
+Também informa o score, a classificação, a decisão de remoção e os trechos vizinhos
+para URLs e sinais promocionais.
 
 ### Teste end-to-end (backend real)
 

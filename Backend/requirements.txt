@@ -1,6 +1,5 @@
 fastapi
 uvicorn[standard]
-pypdf
 mysql-connector-python
 
 # Desenvolvimento / testes

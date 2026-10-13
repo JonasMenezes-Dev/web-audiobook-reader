@@ -10,6 +10,7 @@ share/
 *.pyc
 __pycache__/
 .pytest_cache/
+.ruff_cache/
 
 # --- Banco de Dados & Configurações Sensíveis ---
 .env
