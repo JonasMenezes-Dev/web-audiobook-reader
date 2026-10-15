@@ -20,6 +20,10 @@ except ImportError:
 
 app = FastAPI()
 
+# Limites defensivos para evitar consumo excessivo de memória/CPU por uploads.
+MAX_PDF_SIZE_BYTES = 25 * 1024 * 1024
+MAX_PDF_PAGES = 500
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -28,6 +32,50 @@ app.add_middleware(
 )
 
 
+
+
+async def _read_and_validate_pdf(file: UploadFile) -> bytes:
+    """Lê um PDF com limite de tamanho e valida assinatura, abertura e páginas."""
+    contents = await file.read(MAX_PDF_SIZE_BYTES + 1)
+    if not contents:
+        raise HTTPException(status_code=400, detail="O arquivo enviado está vazio.")
+    if len(contents) > MAX_PDF_SIZE_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail="O PDF excede o limite de 25 MB.",
+        )
+    if b"%PDF-" not in contents[:1024]:
+        raise HTTPException(
+            status_code=415,
+            detail="O arquivo enviado não parece ser um PDF válido.",
+        )
+
+    try:
+        documento = fitz.open(stream=contents, filetype="pdf")
+    except Exception as exc:
+        raise HTTPException(
+            status_code=400,
+            detail="Não foi possível abrir o PDF. Verifique se o arquivo está íntegro.",
+        ) from exc
+
+    try:
+        if documento.is_encrypted:
+            raise HTTPException(
+                status_code=400,
+                detail="PDF protegido por senha não é suportado.",
+            )
+        total_paginas = len(documento)
+        if total_paginas < 1:
+            raise HTTPException(status_code=400, detail="O PDF não contém páginas.")
+        if total_paginas > MAX_PDF_PAGES:
+            raise HTTPException(
+                status_code=413,
+                detail="O PDF excede o limite de 500 páginas.",
+            )
+    finally:
+        documento.close()
+
+    return contents
 
 
 def extrair_blocos_pdf(caminho_pdf, progress_callback=None):
@@ -832,11 +880,16 @@ async def processar_pdf(file: UploadFile = File()):
     if fitz is None:
         raise HTTPException(status_code=400, detail="Instale PyMuPDF: pip install pymupdf")
 
+    contents = await _read_and_validate_pdf(file)
     try:
-        contents = await file.read()
         return _processar_pdf_completo(contents, file.filename)
-    except Exception as e:
-        return {"error": str(e)}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail="Falha ao processar o PDF.",
+        ) from exc
 
 
 async def _stream_pdf_processing(contents, filename):
@@ -863,8 +916,12 @@ async def _stream_pdf_processing(contents, filename):
                 stage_callback=report_stage,
             )
             events.put({"type": "result", "data": result})
-        except Exception as exc:
-            events.put({"type": "error", "message": str(exc) or "Falha ao processar o PDF."})
+        except Exception:
+            # Não exponha detalhes internos nem caminhos do servidor ao cliente.
+            events.put({
+                "type": "error",
+                "message": "Não foi possível extrair o texto deste PDF. Verifique se o arquivo está íntegro e tente novamente.",
+            })
         finally:
             events.put(None)
 
@@ -883,7 +940,7 @@ async def processar_pdf_com_progresso(file: UploadFile = File()):
     if fitz is None:
         raise HTTPException(status_code=400, detail="Instale PyMuPDF: pip install pymupdf")
 
-    contents = await file.read()
+    contents = await _read_and_validate_pdf(file)
     return StreamingResponse(
         _stream_pdf_processing(contents, file.filename),
         media_type="application/x-ndjson",

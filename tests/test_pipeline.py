@@ -656,3 +656,41 @@ def test_speak_nao_cancela_a_cada_fala():
     assert "speechSynthesis.cancel()" not in corpo, (
         "speak() ainda cancela a fala a cada chamada (causa de trechos pulados)"
     )
+
+
+
+def test_frontend_renderiza_texto_de_arquivos_com_textcontent():
+    src = SCRIPT_JS.read_text(encoding="utf-8")
+    ini = src.index("function renderText()")
+    fim = src.index("// Salta para um índice", ini)
+    corpo = src[ini:fim]
+    assert "createElement('span')" in corpo
+    assert "textContent = sentence" in corpo
+    assert "innerHTML" not in corpo
+
+
+def test_frontend_nao_insere_nomes_de_arquivos_com_innerhtml():
+    src = SCRIPT_JS.read_text(encoding="utf-8")
+    ini = src.index("function loadRecents()")
+    fim = src.index("function togglePlay()", ini)
+    corpo = src[ini:fim]
+    assert "JSON.parse" in corpo
+    assert "textContent = item.title" in corpo
+    assert "innerHTML" not in corpo
+
+
+def test_backend_define_limites_e_valida_upload_pdf():
+    src = _MAIN_PY.read_text(encoding="utf-8")
+    assert "MAX_PDF_SIZE_BYTES = 25 * 1024 * 1024" in src
+    assert "MAX_PDF_PAGES = 500" in src
+    assert "async def _read_and_validate_pdf(file: UploadFile)" in src
+    assert "await file.read(MAX_PDF_SIZE_BYTES + 1)" in src
+    assert "status_code=413" in src
+    assert "status_code=415" in src
+
+
+def test_frontend_sem_pdfjs_e_logs_debug_desativados():
+    src = SCRIPT_JS.read_text(encoding="utf-8")
+    html = (Path(ROOT) / "index.html").read_text(encoding="utf-8")
+    assert "const DEBUG = false;" in src
+    assert "pdf.min.js" not in html
