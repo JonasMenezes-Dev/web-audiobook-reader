@@ -410,7 +410,7 @@ function processText(text, title, sentences) {
     state.rate = prog && SPEEDS.includes(prog.rate) ? prog.rate : 1.0;
 
     document.getElementById('r-title').textContent = title;
-    document.getElementById('btn-spd').textContent = state.rate.toFixed(2) + 'x';
+    document.querySelector('#btn-spd span').textContent = state.rate.toFixed(2) + 'x';
 
     renderText();
     document.getElementById('screen-import').hidden = true;
@@ -641,7 +641,7 @@ function cycleSpeed() {
     let currentPos = SPEEDS.indexOf(state.rate);
     if (currentPos === -1) currentPos = 0;
     state.rate = SPEEDS[(currentPos + 1) % SPEEDS.length];
-    document.getElementById('btn-spd').textContent = state.rate.toFixed(2) + 'x';
+    document.querySelector('#btn-spd span').textContent = state.rate.toFixed(2) + 'x';
     log('[TTS] Velocidade:', state.rate);
     if (state.playing) {
         cancelSpeech();
