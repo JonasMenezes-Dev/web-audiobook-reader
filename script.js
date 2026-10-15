@@ -1,6 +1,6 @@
 
 // Altere para true para ver logs detalhados de extração/ordenação/TTS no console.
-const DEBUG = true;
+const DEBUG = false;
 
 const STORAGE_KEY = 'audiolivro_v1';
 
@@ -304,7 +304,8 @@ function normalizeText(text) {
     t = t.replace(/\b(\d{1,3})(\.\d{3})+\b/g, s => s.replace(/\./g, ''));
 
     // Limpeza de espaços em excesso
-    t = t.replace(/\s+/g, ' ').trim();
+    // Mantém quebras de parágrafo para que a leitura preserve pausas naturais.
+    t = t.replace(/[ \t]+/g, ' ').replace(/ *\n */g, '\n').replace(/\n{3,}/g, '\n\n').trim();
     return t;
 }
 
@@ -384,7 +385,7 @@ function processText(text, title, sentences) {
     // Filtra apenas trechos vazios/curtos demais (ex.: "Ele parou." continua).
     const base = sentences && Array.isArray(sentences)
         ? sentences.filter(s => s && s.trim().length > 2)
-        : splitIntoSentences(normalizeText(text.replace(/\s+/g, ' ')));
+        : splitIntoSentences(normalizeText(text));
 
     state.sentences = base;
 
@@ -398,8 +399,9 @@ function processText(text, title, sentences) {
     // Recupera o progresso salvo deste título, se houver.
     const saved = localStorage.getItem(`${STORAGE_KEY}_${title}`);
     const prog = saved ? JSON.parse(saved) : null;
-    state.currentIdx = (prog && prog.currentIdx) || 0;
-    state.rate = (prog && prog.rate) || 1.0;
+    const savedIndex = prog && Number.isInteger(prog.currentIdx) ? prog.currentIdx : 0;
+    state.currentIdx = Math.max(0, Math.min(savedIndex, state.sentences.length - 1));
+    state.rate = prog && SPEEDS.includes(prog.rate) ? prog.rate : 1.0;
 
     document.getElementById('r-title').textContent = title;
     document.getElementById('btn-spd').textContent = state.rate.toFixed(2) + 'x';
@@ -414,9 +416,17 @@ function processText(text, title, sentences) {
 
 function renderText() {
     const container = document.getElementById('reading-inner');
-    container.innerHTML = state.sentences.map((s, i) =>
-        `<span class="sent" id="s-${i}" onclick="goTo(${i})">${s}</span>`
-    ).join(" ");
+    container.replaceChildren();
+
+    state.sentences.forEach((sentence, index) => {
+        const span = document.createElement('span');
+        span.className = 'sent';
+        span.id = `s-${index}`;
+        span.textContent = sentence;
+        span.addEventListener('click', () => goTo(index));
+        container.appendChild(span);
+        container.appendChild(document.createTextNode(' '));
+    });
 }
 
 
@@ -488,28 +498,70 @@ function saveProgress() {
 
 function loadRecents() {
     const list = document.getElementById('book-list');
+    if (!list) return;
+
     const items = [];
     for (let i = 0; i < localStorage.length; i++) {
         const key = localStorage.key(i);
-        if (key.startsWith(STORAGE_KEY + '_')) {
-            items.push(JSON.parse(localStorage.getItem(key)));
+        if (!key || !key.startsWith(STORAGE_KEY + '_')) continue;
+
+        try {
+            const item = JSON.parse(localStorage.getItem(key));
+            if (
+                item &&
+                typeof item.title === 'string' &&
+                Number.isFinite(item.date) &&
+                Number.isInteger(item.currentIdx) &&
+                Number.isInteger(item.total) &&
+                item.total > 0
+            ) {
+                items.push(item);
+            }
+        } catch (err) {
+            // Ignora registros locais corrompidos sem impedir a abertura do app.
         }
     }
 
     // Ordenar por data (mais recentes primeiro)
     items.sort((a, b) => b.date - a.date);
+    list.replaceChildren();
 
     if (items.length === 0) {
-        list.innerHTML = `<p class="no-recents">Nenhum arquivo recente.</p>`;
+        const empty = document.createElement('p');
+        empty.className = 'no-recents';
+        empty.textContent = 'Nenhum arquivo recente.';
+        list.appendChild(empty);
         return;
     }
 
-    list.innerHTML = items.slice(0, 5).map(item => `
-            <div class="recent-item" onclick="alert('Como o arquivo original não fica guardado no navegador por segurança, por favor selecione o arquivo ${item.title} novamente para continuar de onde parou.')">
-                <div>${item.title}</div>
-                <div>${Math.round((item.currentIdx / item.total) * 100)}% concluído</div>
-            </div>
-        `).join('');
+    items.slice(0, 5).forEach(item => {
+        const recent = document.createElement('div');
+        recent.className = 'recent-item';
+        recent.tabIndex = 0;
+        recent.setAttribute('role', 'button');
+
+        const title = document.createElement('div');
+        title.textContent = item.title;
+
+        const progress = document.createElement('div');
+        const pct = Math.max(0, Math.min(100, Math.round((item.currentIdx / item.total) * 100)));
+        progress.textContent = `${pct}% concluído`;
+
+        const resumeMessage = () => alert(
+            'Como o arquivo original não fica guardado no navegador por segurança, selecione o arquivo ' +
+            item.title + ' novamente para continuar de onde parou.'
+        );
+        recent.addEventListener('click', resumeMessage);
+        recent.addEventListener('keydown', event => {
+            if (event.key === 'Enter' || event.key === ' ') {
+                event.preventDefault();
+                resumeMessage();
+            }
+        });
+
+        recent.append(title, progress);
+        list.appendChild(recent);
+    });
 }
 
 
