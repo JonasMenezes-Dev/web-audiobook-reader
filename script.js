@@ -396,9 +396,15 @@ function processText(text, title, sentences) {
 
     log('[ESTRUTURA]', state.sentences.length + ' trechos. Itens:', state.sentences.slice(0, 8));
 
-    // Recupera o progresso salvo deste título, se houver.
-    const saved = localStorage.getItem(`${STORAGE_KEY}_${title}`);
-    const prog = saved ? JSON.parse(saved) : null;
+    // Recupera o progresso salvo sem deixar dados locais corrompidos travarem a leitura.
+    let prog = null;
+    try {
+        const saved = localStorage.getItem(`${STORAGE_KEY}_${title}`);
+        prog = saved ? JSON.parse(saved) : null;
+    } catch (err) {
+        console.warn('Progresso salvo inválido; iniciando do começo.');
+    }
+
     const savedIndex = prog && Number.isInteger(prog.currentIdx) ? prog.currentIdx : 0;
     state.currentIdx = Math.max(0, Math.min(savedIndex, state.sentences.length - 1));
     state.rate = prog && SPEEDS.includes(prog.rate) ? prog.rate : 1.0;
