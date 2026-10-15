@@ -1,8 +1,4 @@
 
-// Configuração inicial obrigatória do PDF.js
-const pdfjsLib = window['pdfjs-dist/build/pdf'];
-pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
-
 // Altere para true para ver logs detalhados de extração/ordenação/TTS no console.
 const DEBUG = true;
 
