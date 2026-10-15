@@ -10,6 +10,8 @@ Aplicação web para transformar arquivos PDF e TXT em audiolivros, com leitura 
 - Narração com Web Speech API e velocidades de 0,7x, 1x, 1,25x, 1,5x e 2x.
 - Progresso e livros recentes salvos no navegador.
 - Indicador visual durante o envio e processamento do arquivo.
+- Interface responsiva com cartões de livros recentes adaptáveis a telas estreitas, sem ultrapassar a largura disponível.
+- Controles do player com ícones SVG alinhados e layout adaptado para desktop e celular.
 
 ## Arquitetura
 
@@ -53,6 +55,8 @@ O processamento de PDF depende do backend. Se ele estiver indisponível, a aplic
 Para usar a versão publicada, abra o GitHub Pages do projeto e confira se `config.js` aponta para a URL pública atual do backend.
 
 ## Testes
+
+O GitHub Actions executa automaticamente os testes de regressão e de API em pushes para `main` e em pull requests. Confira o resultado na aba **Actions** do repositório.
 
 Na raiz do projeto, com as dependências instaladas:
 
