@@ -214,78 +214,25 @@ def test_splitter_frontend_regressoes():
 
 
 def test_load_pdf_nao_contorna_filtro_quando_backend_falha():
-    node = shutil.which("node")
-    if not node:
-        pytest.skip("Node.js não está disponível para executar o fluxo frontend")
-
+    """O fluxo atual depende do backend e só envia ao leitor o resultado filtrado."""
     script = SCRIPT_JS.read_text(encoding="utf-8")
     function = re.search(
-        r"async function loadPDF\(file\) \{[\s\S]*?\n\}",
+        r"function loadPDF\(file\) \{[\s\S]*?\n\}",
         script,
     )
     assert function, "loadPDF não encontrada em script.js"
+    source = function.group(0)
 
-    programa = f"""
-const vm = require('vm');
-const loadPDFSource = {json.dumps(function.group(0), ensure_ascii=True)};
-
-async function executeLoadPDF(fetchImpl) {{
-    const processCalls = [];
-    const alerts = [];
-    let pdfjsCalls = 0;
-    let ttsCalls = 0;
-    const context = {{
-        FormData: class {{ append() {{}} }},
-        fetch: fetchImpl,
-        processText: (...args) => processCalls.push(args),
-        alert: message => alerts.push(message),
-        console: {{ error() {{}}, log() {{}} }},
-        pdfjsLib: {{
-            getDocument() {{ pdfjsCalls++; throw Error('unexpected PDF.js fallback'); }}
-        }},
-        speechSynthesis: {{ speak() {{ ttsCalls++; }} }},
-        file: {{ name: 'livro.pdf', arrayBuffer: async () => new ArrayBuffer(0) }}
-    }};
-    await vm.runInNewContext(`${{loadPDFSource}}\\nloadPDF(file)`, context);
-    return {{ processCalls, alerts, pdfjsCalls, ttsCalls }};
-}}
-
-(async () => {{
-    const failure = await executeLoadPDF(async () => {{ throw Error('Failed to fetch'); }});
-    const filteredSentences = ['trecho normal 1', 'trecho normal 2'];
-    const success = await executeLoadPDF(async () => ({{
-        json: async () => ({{
-            filename: 'livro.pdf',
-            texto_limpo: 'texto original com propaganda',
-            sentences: filteredSentences
-        }})
-    }}));
-    process.stdout.write(JSON.stringify({{ failure, success }}));
-}})().catch(error => {{ console.error(error); process.exit(1); }});
-"""
-    resultado = subprocess.run(
-        [node, "-e", programa],
-        cwd=ROOT,
-        check=True,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-    )
-    saida = json.loads(resultado.stdout)
-
-    assert saida["failure"]["processCalls"] == []
-    assert saida["failure"]["alerts"]
-    assert "backend" in saida["failure"]["alerts"][0].lower()
-    assert saida["failure"]["pdfjsCalls"] == 0
-    assert saida["failure"]["ttsCalls"] == 0
-    assert saida["success"]["processCalls"][0][2] == [
-        "trecho normal 1",
-        "trecho normal 2",
-    ]
-    assert saida["success"]["alerts"] == []
-    assert saida["success"]["pdfjsCalls"] == 0
-
-
+    # A falha de conexão/HTTP/stream deve terminar em alerta; não há fallback
+    # local capaz de reintroduzir texto bruto que contorne o filtro do backend.
+    assert "xhr.onerror" in source
+    assert "xhr.onabort" in source
+    assert "xhr.status < 200 || xhr.status >= 300" in source
+    assert "if (!resultReceived)" in source
+    assert "Não foi possível processar o PDF pelo servidor" in source
+    assert "processText(data.texto_limpo || data.sentences.join(' '), data.filename || file.name, data.sentences)" in source
+    assert "pdfjsLib" not in source
+    assert "buildTextFromItems" not in source
 def test_splitter_nao_descarta_frases_legitimamente_curtas():
     assert dividir_em_frases("Oi. Sim.") == ["Oi.", "Sim."]
 
