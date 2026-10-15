@@ -1,141 +1,88 @@
-#  AudioLivro Pro
+# AudioLivro Pro
 
-O **AudioLivro Pro** é uma aplicação web leve e intuitiva projetada para transformar arquivos PDF e TXT em áudio narrado. Ideal para estudantes e entusiastas de leitura que desejam consumir conteúdo enquanto realizam outras tarefas.
+Aplicação web para transformar arquivos PDF e TXT em audiolivros, com leitura por voz do navegador, controle de velocidade e progresso salvo localmente.
 
----
+## Funcionalidades
 
-##  Funcionalidades
+- Importação de PDF pelo backend e de TXT diretamente no navegador.
+- Extração estrutural de PDF com PyMuPDF, preservando a ordem visual, títulos e estilos.
+- Filtro de propaganda e de resíduos técnicos no processamento do PDF.
+- Narração com Web Speech API e velocidades de 0,7x, 1x, 1,25x, 1,5x e 2x.
+- Progresso e livros recentes salvos no navegador.
+- Indicador visual durante o envio e processamento do arquivo.
 
-* **Leitura de PDF/TXT:** extração estrutural de PDFs por posição com PyMuPDF; TXT é lido direto no navegador.
-* **Narração Customizável:** seleção de voz e controle de velocidade.
-* **Progresso Automático:** o app lembra em qual frase você parou, mesmo após fechar o navegador.
-* **Interface Imersiva:** design focado na leitura, com Dark Mode e destaque da frase atual.
-* **Acessibilidade:** navegação simplificada por frases (anterior, próxima, clique para saltar).
+## Arquitetura
 
-# Tecnologias & Arquitetura
-O projeto separa cliente e servidor:
+- **Frontend:** HTML, CSS e JavaScript; publicado no GitHub Pages.
+- **Backend:** FastAPI/Python, em `Backend/`.
+- **PDF:** PyMuPDF é usado no backend para extração e reconstrução do conteúdo.
+- **TXT e voz:** FileReader e Web Speech API do navegador.
+- **Configuração:** `config.js` define a URL do backend. Em desenvolvimento local, o endereço padrão é `http://127.0.0.1:8000`; em produção, configure a URL pública.
 
-* Frontend: HTML5, CSS3 (Flexbox) e JavaScript ES6+.
-* APIs de Navegador: Web Speech API (síntese de voz).
-* Backend (Motor): FastAPI (Python) — framework de alta performance para a construção da API.
-* Extração PDF: PyMuPDF fornece posição, fonte, tamanho e estilo de cada span; o backend reconstrói linhas, parágrafos e títulos, preservando também a estrutura por trecho.
-* Validação de Dados: Pydantic — garante o contrato de dados entre o JS e o Python (evitando erros 422).
-* Comunicação: Fetch/XHR com CORS habilitado para integração entre origens; o upload de PDF usa streaming de progresso (`POST /upload-pdf-progress/`).
-* Deploy: blueprint do Render (`render.yaml`) para o backend e `config.js` para apontar a URL pública da API no frontend.
+O processamento de PDF depende do backend. Se ele estiver indisponível, a aplicação informa a falha e **não tenta ler o PDF por um caminho alternativo que possa ignorar o filtro de conteúdo**.
 
-# Persistência de Progresso
+## Como executar localmente
 
-O progresso de leitura fica salvo **localmente no navegador** (`localStorage`), o que mantém o app funcionando offline e sem dependência de banco de dados. Não há mais persistência em MySQL.
+1. Instale Python 3.10 ou superior.
+2. Abra um terminal na pasta do projeto.
+3. Crie e ative um ambiente virtual:
 
-
-# Como Rodar
-
-O passo a passo completo (backend e frontend) está em **[COMO_INICIAR.md](COMO_INICIAR.md)**. Resumo:
-
-1. Entrar em `Backend/`, criar o ambiente virtual e instalar as dependências:
-
-   ```powershell
-   cd Backend
-   python -m venv venv
-   .\venv\Scripts\Activate.ps1
-   pip install -r requirements.txt
+   ```bash
+   python -m venv .venv
+   # Windows PowerShell
+   .\.venv\Scripts\Activate.ps1
+   # macOS/Linux
+   source .venv/bin/activate
    ```
 
-2. Subir o servidor: `uvicorn main:app --reload` (porta 8000).
-3. Na raiz do projeto, servir o frontend: `python -m http.server 5500`.
-4. Abrir `http://127.0.0.1:5500/index.html` no navegador.
+4. Instale as dependências:
 
-# Como usar
+   ```bash
+   pip install -r Backend/requirements.txt
+   ```
 
-1. Faça o upload do seu arquivo PDF ou TXT.
-2. Selecione sua voz preferida no menu superior (Dica: No **Microsoft Edge**, use as vozes 'Natural').
-3. Ajuste a velocidade se necessário e dê o Play.
-4. Clique em qualquer frase para saltar diretamente para aquele trecho.
+5. Inicie o backend:
 
-# Testes e Regressão
+   ```bash
+   cd Backend
+   uvicorn main:app --reload
+   ```
 
-O projeto possui um **PDF de regressão** e uma suíte automatizada que valida a
-extração geométrica, a estrutura e a divisão: `PDF → spans → linhas/parágrafos → frases`.
-Após o splitter, o backend classifica cada frase com score e sinais; URLs isoladas
-e propaganda com evidência suficiente saem da lista enviada ao TTS, enquanto
-`estrutura`, `texto_limpo`, frases originais e classificações permanecem na resposta.
-Os testes também cobrem as classificações conservadoras e a preservação da ordem
-após a filtragem.
+6. Abra o frontend por um servidor HTTP local (por exemplo, a extensão Live Server do VS Code). O backend local fica em `http://127.0.0.1:8000`.
 
-### Gerar o PDF de regressão
+Para usar a versão publicada, abra o GitHub Pages do projeto e confira se `config.js` aponta para a URL pública atual do backend.
 
-```bash
-python Backend/make_test_pdf.py
-```
+## Testes
 
-Gera `tests/fixtures/regressao.pdf` com os 16 casos exigidos: título, subtítulo,
-parágrafo, itálico, negrito, números, datas, moeda, porcentagens, parênteses,
-cabeçalho, rodapé, número de página, duas colunas, frases curtas e longas.
-
-### Rodar os testes automatizados
+Na raiz do projeto, com as dependências instaladas:
 
 ```bash
 python -m pytest tests/test_pipeline.py -v
 ```
 
-Cobrem: extração por posição com PyMuPDF, preservação de negrito/itálico, ordem das
-colunas, remoção de cabeçalho/rodapé/número de página, integridade de decimais
-(`R$ 1.250,50`, `1.500`), parênteses, ausência de duplicatas, ordem das colunas,
-índice dos capítulos, título isolado do parágrafo, presença da velocidade `1.25x`
-e ausência de `cancel()` dentro de `speak()`.
+O conjunto verifica a extração estrutural, a ordem de leitura, a divisão em frases, os estilos, a velocidade 1,25x e a proteção contra fallback que contorne o filtro quando o backend falhar.
 
-### Estabilidade do player (correções)
-
-* **Pausar/retomar repetidas vezes:** cada fala cria uma instância própria de
-  `SpeechSynthesisUtterance`, protegida por um contador de geração
-  (`speechGeneration`). Callbacks atrasados de falas canceladas são descartados,
-  evitando que o player travasse após algumas pausas seguidas.
-* **Clique para saltar a um trecho:** a rolagem do clique é instantânea (o
-  `scroll-behavior: smooth` do container é suspenso durante o salto), para não
-  competir com a rolagem automática disparada pelo avanço do áudio.
-
-> 📄 PDFs na raiz do projeto são ignorados pelo Git (`.gitignore`), exceto o
-> `tests/fixtures/regressao.pdf`, que faz parte da suíte de testes.
-
-### Diagnóstico visual do pipeline
+Para gerar o PDF sintético de regressão:
 
 ```bash
-python tests/diagnostico.py            # usa o PDF de regressão
-python tests/diagnostico.py meu.pdf    # ou um PDF seu
+python Backend/make_test_pdf.py
 ```
 
-Imprime o texto bruto, o texto reconstruído e cada frase numerada na **ordem exata de
-envio ao TTS**, permitindo detectar trechos fora de ordem, pulados ou duplicados.
-Também informa o score, a classificação, a decisão de remoção e os trechos vizinhos
-para URLs e sinais promocionais.
+Para inspecionar o pipeline:
 
-### Teste end-to-end (backend real)
+```bash
+python tests/diagnostico.py
+python tests/diagnostico.py caminho/para/arquivo.pdf
+```
 
-Com o backend rodando:
+Para testar o endpoint com o backend em execução:
 
 ```bash
 python tests/e2e_upload.py
 ```
 
-Envia o PDF de regressão para `POST /upload-pdf/` e mostra o JSON que o frontend
-recebe.
+## Diagnóstico
 
-# Modo DEBUG
-
-Em `script.js`:
-
-```javascript
-const DEBUG = true;   // logs de [PDF], [ESTRUTURA] e [TTS] Trecho NNN no console
-```
-
-Durante o desenvolvimento, deixe `true` para acompanhar o console:
-
-```text
-[TTS] Trecho 001 ...
-[TTS] Trecho 002 ...
-```
-
-A sequência deve ser `001 → 002 → 003`. Padrões como `001 → 002 → 004` indicam
-problema de ordenação; `002 → 002` indica duplicação. **Desative ao publicar.**
-
-*Projeto desenvolvido para fins de estudo sobre manipulação de APIs de áudio e persistência de dados local.*
+- Se PDF não processar, confirme que o backend está ativo e que a URL configurada em `config.js` está correta.
+- Se o navegador não falar, confira as vozes e permissões de áudio do navegador.
+- Para depuração detalhada, altere `const DEBUG = true` em `script.js`; desative os logs antes de publicar.
