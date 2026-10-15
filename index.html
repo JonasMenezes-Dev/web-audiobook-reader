@@ -4,17 +4,17 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#0c0c0f">
     <title>AudioLivro Pro</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link
-        href="https://fonts.googleapis.com/css2?family=Lora:ital,wght@0,400;0,600;1,400&family=DM+Sans:wght@300;400;500&family=JetBrains+Mono:wght@400;500&display=swap"
+        href="https://fonts.googleapis.com/css2?family=Lora:ital,wght@0,400;0,600;1,400&family=DM+Sans:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"
         rel="stylesheet">
-   <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="style.css">
 </head>
 
 <body>
-
-
     <div id="loading-overlay" class="loading-overlay" hidden role="status" aria-live="polite" aria-busy="true">
         <div class="loading-card">
             <div class="loading-spinner" aria-hidden="true"></div>
@@ -26,55 +26,99 @@
         </div>
     </div>
 
-    <div id="screen-import" class="screen">
+    <main id="screen-import" class="screen">
         <div class="import-wrap">
-<h1>AudioLivro Pro</h1>
-<p>Transforme PDFs e textos em audiolivros imersivos.
-            </p>
+            <div class="brand-mark" aria-hidden="true">
+                <svg viewBox="0 0 48 48" fill="none">
+                    <rect x="2" y="2" width="44" height="44" rx="14" fill="currentColor" fill-opacity=".12" />
+                    <path d="M11 18.5v11M17 14v20M23 20v8M29 11v26M35 17v14M41 21v6"
+                        stroke="currentColor" stroke-width="2.8" stroke-linecap="round" />
+                </svg>
+            </div>
+            <p class="eyebrow">SUA LEITURA, EM ÁUDIO</p>
+            <h1>AudioLivro <span>Pro</span></h1>
+            <p class="intro-copy">Transforme PDFs e textos em audiolivros imersivos.</p>
 
-            <div id="drop-zone" class="drop-zone" onclick="document.getElementById('file-input').click()">
-<span>📄</span>
-<p>Toque ou arraste seu arquivo aqui</p>
+            <div id="drop-zone" class="drop-zone" role="button" tabindex="0" aria-label="Selecionar arquivo PDF ou TXT"
+                onclick="document.getElementById('file-input').click()"
+                onkeydown="if(event.key === 'Enter' || event.key === ' '){event.preventDefault();document.getElementById('file-input').click()}">
+                <div class="upload-icon" aria-hidden="true">
+                    <svg viewBox="0 0 32 32" fill="none">
+                        <path d="M16 21V5m0 0-6 6m6-6 6 6" stroke="currentColor" stroke-width="1.8"
+                            stroke-linecap="round" stroke-linejoin="round" />
+                        <path d="M7 19v7a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" stroke="currentColor"
+                            stroke-width="1.8" stroke-linecap="round" />
+                    </svg>
+                </div>
+                <h2>Abra seu próximo livro</h2>
+                <p>Arraste o arquivo para cá ou <span class="inline-link">selecione no dispositivo</span></p>
+                <div class="file-types"><span>PDF</span><span>TXT</span><span>Até 25 MB</span></div>
                 <input type="file" id="file-input" accept=".pdf,.txt" hidden>
             </div>
 
-            <div id="saved-section">
-                <p>
-                    Arquivos Recentes</p>
+            <section id="saved-section" aria-label="Arquivos recentes">
+                <div class="section-heading">
+                    <div>
+                        <p class="eyebrow">CONTINUE DE ONDE PAROU</p>
+                        <h2>Arquivos recentes</h2>
+                    </div>
+                    <span class="section-symbol" aria-hidden="true">
+                        <svg viewBox="0 0 24 24" fill="none">
+                            <path d="M12 7v5l3 2M21 12a9 9 0 1 1-2.64-6.36" stroke="currentColor"
+                                stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" />
+                            <path d="M21 4v5h-5" stroke="currentColor" stroke-width="1.7"
+                                stroke-linecap="round" stroke-linejoin="round" />
+                        </svg>
+                    </span>
+                </div>
                 <div id="book-list"></div>
-            </div>
+            </section>
+            <p class="privacy-note"><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M8 1.5 13 3.5v4c0 3.1-2.1 5.5-5 7-2.9-1.5-5-3.9-5-7v-4l5-2Z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/><path d="m5.5 7.8 1.6 1.6 3.4-3.5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></svg> Seu espaço pessoal de leitura</p>
         </div>
-    </div>
+    </main>
 
-    <div id="screen-reader" class="screen" hidden>
-<header>
-            <button onclick="location.reload()">✕
-                SAIR</button>
-<div id="r-title">—</div>
+    <section id="screen-reader" class="screen" hidden aria-label="Leitor de audiolivro">
+        <header class="reader-header">
+            <button class="exit-button" onclick="location.reload()" aria-label="Sair da leitura">
+                <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="m15 18-6-6 6-6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                <span>Biblioteca</span>
+            </button>
+            <div id="r-title" title="Documento atual">—</div>
+            <div class="header-spacer" aria-hidden="true"></div>
         </header>
 
         <div id="reading-area" class="reading-area">
-            <div id="reading-inner" class="reading-inner"></div>
+            <div class="reading-inner" id="reading-inner"></div>
         </div>
 
-        <footer class="player">
-            <div class="prog-track" id="prog-track" onclick="handleProgClick(event)">
-<div class="prog-fill" id="prog-fill"></div>
+        <footer class="player" aria-label="Controles de reprodução">
+            <div class="player-progress">
+                <div class="prog-track" id="prog-track" role="progressbar" aria-label="Progresso da leitura"
+                    aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" onclick="handleProgClick(event)">
+                    <div class="prog-fill" id="prog-fill"></div>
+                </div>
+                <div class="progress-meta"><span>PROGRESSO</span><span id="pos-txt">0 / 0</span></div>
             </div>
             <div class="player-row">
-<span id="pos-txt">0
-                    / 0</span>
-<div>
-                    <button class="cbtn" onclick="prev()">⏮</button>
-                    <button class="pbtn" id="btn-play" onclick="togglePlay()">
-<span id="play-icon">▶</span>
+                <div class="player-spacer" aria-hidden="true"></div>
+                <div class="transport-controls">
+                    <button class="cbtn" onclick="prev()" aria-label="Voltar uma frase" title="Voltar uma frase">
+                        <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M5 5v14M19 6l-10 6 10 6V6Z" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
                     </button>
-                    <button class="cbtn" onclick="next()">⏭</button>
+                    <button class="pbtn" id="btn-play" onclick="togglePlay()" aria-label="Reproduzir ou pausar" title="Reproduzir ou pausar">
+                        <span id="play-icon">▶</span>
+                    </button>
+                    <button class="cbtn" onclick="next()" aria-label="Avançar uma frase" title="Avançar uma frase">
+                        <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M19 5v14M5 6l10 6-10 6V6Z" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                    </button>
                 </div>
-                <button onclick="cycleSpeed()" id="btn-spd">1.00x</button>
+                <button onclick="cycleSpeed()" id="btn-spd" aria-label="Alterar velocidade da narração" title="Alterar velocidade da narração">
+                    <svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M3 10a7 7 0 1 1 2.05 4.95M3 15v-5h5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                    <span>1.00x</span>
+                </button>
             </div>
         </footer>
-    </div>
+    </section>
     <script src="config.js"></script>
     <script src="script.js"></script>
 </body>
