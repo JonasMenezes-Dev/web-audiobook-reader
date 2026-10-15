@@ -25,6 +25,10 @@ __pycache__/
 .DS_Store
 node_modules/
 
+# --- Livros do usuário (não versionar conteúdo pessoal) ---
+*.pdf
+!tests/fixtures/regressao.pdf
+
 # --- Arquivos de Sistema ---
 Thumbs.db
 desktop.ini

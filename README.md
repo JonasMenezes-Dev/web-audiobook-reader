@@ -88,6 +88,19 @@ colunas, remoção de cabeçalho/rodapé/número de página, integridade de deci
 índice dos capítulos, título isolado do parágrafo, presença da velocidade `1.25x`
 e ausência de `cancel()` dentro de `speak()`.
 
+### Estabilidade do player (correções)
+
+* **Pausar/retomar repetidas vezes:** cada fala cria uma instância própria de
+  `SpeechSynthesisUtterance`, protegida por um contador de geração
+  (`speechGeneration`). Callbacks atrasados de falas canceladas são descartados,
+  evitando que o player travasse após algumas pausas seguidas.
+* **Clique para saltar a um trecho:** a rolagem do clique é instantânea (o
+  `scroll-behavior: smooth` do container é suspenso durante o salto), para não
+  competir com a rolagem automática disparada pelo avanço do áudio.
+
+> 📄 PDFs na raiz do projeto são ignorados pelo Git (`.gitignore`), exceto o
+> `tests/fixtures/regressao.pdf`, que faz parte da suíte de testes.
+
 ### Diagnóstico visual do pipeline
 
 ```bash

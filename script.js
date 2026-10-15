@@ -7,6 +7,13 @@ const STORAGE_KEY = 'audiolivro_v1';
 // Velocidades disponíveis. 1.25x entra na mesma estrutura das demais.
 const SPEEDS = [1.0, 1.25, 1.5, 2.0, 0.7];
 
+// Cada fala usa uma instância própria de SpeechSynthesisUtterance.
+// Reutilizar um único objeto global fazia o navegador entregar eventos
+// onend/onerror de falas canceladas DEPOIS do próximo speak(), travando
+// o player após algumas pausas (o handler antigo reatribuía o novo).
+// A geração invalida callbacks obsoletos: só quem a criou pode reagir.
+let speechGeneration = 0;
+
 let state = {
     title: '',
     sentences: [],
@@ -14,8 +21,6 @@ let state = {
     rate: 1.0,
     playing: false
 };
-
-const utter = new SpeechSynthesisUtterance();
 
 function log(...args) {
     if (DEBUG) console.log(...args);
@@ -202,16 +207,11 @@ function processText(text, title, sentences) {
     state.title = title;
     log('[PDF]', 'Conteúdo recebido:', text);
 
-    let base;
-    if (sentences && Array.isArray(sentences)) {
-        // CORRIGIDO: apenas filtra, sem descartar trechos entre 3 e 10 caracteres
-        // que antes sumiam (ex.: "Ele parou." tem 10 exatos e era cortado).
-        base = sentences.filter(s => s && s.trim().length > 2);
-    } else {
-        // Limpeza + normalização antes do split
-        const cleanText = normalizeText(text.replace(/\s+/g, ' '));
-        base = splitIntoSentences(cleanText);
-    }
+    // O backend (PDF) já envia as frases filtradas. O TXT é dividido aqui.
+    // Filtra apenas trechos vazios/curtos demais (ex.: "Ele parou." continua).
+    const base = sentences && Array.isArray(sentences)
+        ? sentences.filter(s => s && s.trim().length > 2)
+        : splitIntoSentences(normalizeText(text.replace(/\s+/g, ' ')));
 
     state.sentences = base;
 
@@ -222,18 +222,11 @@ function processText(text, title, sentences) {
 
     log('[ESTRUTURA]', state.sentences.length + ' trechos. Itens:', state.sentences.slice(0, 8));
 
-
-    // Tentar recuperar progresso salvo para este título específico
+    // Recupera o progresso salvo deste título, se houver.
     const saved = localStorage.getItem(`${STORAGE_KEY}_${title}`);
-    if (saved) {
-        const prog = JSON.parse(saved);
-        state.currentIdx = prog.currentIdx || 0;
-        state.rate = prog.rate || 1.0;
-    } else {
-        state.currentIdx = 0;
-        state.rate = 1.0;
-    }
-
+    const prog = saved ? JSON.parse(saved) : null;
+    state.currentIdx = (prog && prog.currentIdx) || 0;
+    state.rate = (prog && prog.rate) || 1.0;
 
     document.getElementById('r-title').textContent = title;
     document.getElementById('btn-spd').textContent = state.rate.toFixed(2) + 'x';
@@ -254,22 +247,47 @@ function renderText() {
 }
 
 
-function goTo(i) {
+// Salta para um índice mantendo a reprodução se ela estava ativa.
+// instant=true rola direto para o trecho (clique); false anima (avanço do áudio).
+function jumpTo(i, instant = false) {
     state.currentIdx = i;
     const wasPlaying = state.playing;
     cancelSpeech();
-    highlight();
+    highlight(true, instant);
     if (wasPlaying) speak();
 }
 
 
-function highlight() {
+function goTo(i) {
+    // Salto por clique: rola imediatamente para o trecho, sem animação.
+    jumpTo(i, true);
+}
+
+
+function scrollToActive() {
+    const active = document.getElementById(`s-${state.currentIdx}`);
+    if (!active) return;
+    // Desliga o 'scroll-behavior: smooth' do container só durante o salto:
+    // rolagens suaves concorrentes (clique vs. avanço do áudio) se cancelavam,
+    // fazendo o clique não levar ao trecho escolhido.
+    const area = document.getElementById('reading-area');
+    const previous = area.style.scrollBehavior;
+    area.style.scrollBehavior = 'auto';
+    active.scrollIntoView({ block: 'center' });
+    area.style.scrollBehavior = previous;
+}
+
+
+function highlight(scroll = true, instant = false) {
     document.querySelectorAll('.sent').forEach(el => el.classList.remove('reading'));
     const active = document.getElementById(`s-${state.currentIdx}`);
 
     if (active) {
         active.classList.add('reading');
-        active.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        if (scroll) {
+            if (instant) scrollToActive();
+            else active.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
     }
 
     const pct = (state.currentIdx / state.sentences.length) * 100;
@@ -325,76 +343,68 @@ function loadRecents() {
 
 function togglePlay() {
     if (state.playing) {
-        cancelSpeech();
         state.playing = false;
         document.getElementById('play-icon').textContent = '▶';
+        cancelSpeech();
     } else {
         state.playing = true;
         document.getElementById('play-icon').textContent = '⏸';
         speak();
     }
 }
+
 function speak() {
-    if (!state.playing || state.currentIdx >= state.sentences.length) {
-        if (state.currentIdx >= state.sentences.length) {
-            state.playing = false;
-            document.getElementById('play-icon').textContent = '▶';
-        }
+    if (state.currentIdx >= state.sentences.length) {
+        // Fim do livro: encerra a reprodução.
+        state.playing = false;
+        document.getElementById('play-icon').textContent = '▶';
         return;
     }
+    if (!state.playing) return;
 
-    // CORRIGIDO: speak() não faz cancel() ao ser chamado pelo próprio onend.
-    // O cancel só ocorre em cancelSpeech(), usado por pause/salto/troca de
-    // velocidade. Cancelar a cada fala abortava a utter corrente em alguns
-    // navegadores, fazendo trechos serem pulados ou lidos fora de ordem.
-
-    utter.text = state.sentences[state.currentIdx];
-
-    // --- AS MELHORIAS DE VOZ ESTÃO AQUI ---
+    // Nova instância por fala: evita que eventos de falas canceladas
+    // reatribuam os handlers da fala corrente (causa do travamento).
+    const generation = ++speechGeneration;
+    const utter = new SpeechSynthesisUtterance(state.sentences[state.currentIdx]);
     utter.voice = getBestVoice(); // Escolhe a voz mais humana disponível
     utter.rate = state.rate;      // Respeita exatamente a velocidade escolhida
     utter.pitch = 1.0;            // Ajuste entre 0.8 e 1.2 para mudar o tom
     utter.lang = 'pt-BR';
-    // --------------------------------------
 
     log('[TTS] Trecho ' + String(state.currentIdx).padStart(3, '0'), utter.text);
 
     utter.onend = () => {
-        if (state.playing) {
-            state.currentIdx++;
-            highlight();
-            speak();
-        }
+        if (generation !== speechGeneration || !state.playing) return;
+        state.currentIdx++;
+        highlight();
+        speak();
     };
 
     utter.onerror = (e) => {
+        // 'interrupted'/'canceled' são esperados ao pausar/saltar: ignorar.
+        if (generation !== speechGeneration) return;
+        if (e.error === 'interrupted' || e.error === 'canceled') return;
         console.error("Erro na síntese:", e);
         state.playing = false;
+        document.getElementById('play-icon').textContent = '▶';
     };
 
     window.speechSynthesis.speak(utter);
 }
 
-// Interrompe a fala atual e reinicia a partir do índice corrente.
+// Interrompe a fala atual invalidando os callbacks pendentes.
 function cancelSpeech() {
+    speechGeneration++;
     window.speechSynthesis.cancel();
 }
 
-window.speechSynthesis.cancel(); // Limpa fila anterior
-
 
 function next() {
-    state.currentIdx = Math.min(state.sentences.length - 1, state.currentIdx + 1);
-    cancelSpeech();
-    highlight();
-    if (state.playing) speak();
+    jumpTo(Math.min(state.sentences.length - 1, state.currentIdx + 1));
 }
 
 function prev() {
-    state.currentIdx = Math.max(0, state.currentIdx - 1);
-    cancelSpeech();
-    highlight();
-    if (state.playing) speak();
+    jumpTo(Math.max(0, state.currentIdx - 1));
 }
 
 function cycleSpeed() {
@@ -412,10 +422,8 @@ function cycleSpeed() {
 function handleProgClick(e) {
     const track = document.getElementById('prog-track');
     const pct = e.offsetX / track.offsetWidth;
-    state.currentIdx = Math.min(state.sentences.length - 1, Math.floor(pct * state.sentences.length));
-    cancelSpeech();
-    highlight();
-    if (state.playing) speak();
+    const alvo = Math.min(state.sentences.length - 1, Math.floor(pct * state.sentences.length));
+    jumpTo(alvo, true);
 }
 
 // Conexão com o backend para salvar o progresso no MySQL.
