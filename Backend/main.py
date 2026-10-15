@@ -1,11 +1,14 @@
+import asyncio
+import json
+import queue
 import re
+import threading
 from typing import Any
 
-import mysql.connector
 import uvicorn
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from fastapi.responses import StreamingResponse
 
 # Importação opcional do PyMuPDF, único extrator usado pelo backend.
 fitz: Any
@@ -24,15 +27,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-db_config = {
-    'host': 'localhost',
-    'user': "root",
-    'password': "", # Verifique se sua senha é vazia mesmo
-    'database': "audiolivro_db"
-}
 
 
-def extrair_blocos_pdf(caminho_pdf):
+
+def extrair_blocos_pdf(caminho_pdf, progress_callback=None):
     """Extrai spans de texto e suas posições e características tipográficas."""
     if fitz is None:
         raise RuntimeError("Instale PyMuPDF: pip install pymupdf")
@@ -43,7 +41,10 @@ def extrair_blocos_pdf(caminho_pdf):
         documento = fitz.open(caminho_pdf)
 
     blocos = []
+    total_paginas = len(documento)
     try:
+        if progress_callback:
+            progress_callback(0, total_paginas)
         for numero_pagina, pagina in enumerate(documento):
             dados = pagina.get_text("dict")
             for numero_bloco, bloco in enumerate(dados.get("blocks", [])):
@@ -69,6 +70,8 @@ def extrair_blocos_pdf(caminho_pdf):
                             "tamanho": span.get("size", 0),
                             "flags": span.get("flags", 0),
                         })
+            if progress_callback:
+                progress_callback(numero_pagina + 1, total_paginas)
     finally:
         documento.close()
     return blocos
@@ -797,35 +800,32 @@ def filtrar_estrutura_para_leitura(estrutura):
     }
 
 
-class DadosProgresso(BaseModel):
-    id_Livro: str
-    indice_frase: int
-
 @app.get("/")
 def home():
     return {"status": "Online", "msg": "Backend AudioLivro ready"}
 
-@app.post("/salvar")
-def salvar_progresso(progresso: DadosProgresso):
-    conn = None
-    try:
-        conn = mysql.connector.connect(**db_config)
-        cursor = conn.cursor()
-        # CORRIGIDO: nome da tabela para 'progresso'
-        sql = """
-            INSERT INTO progresso (id_Livro, indice_frase)
-            VALUES (%s, %s)
-            ON DUPLICATE KEY UPDATE indice_frase = VALUES(indice_frase)
-            """
-        cursor.execute(sql, (progresso.id_Livro, progresso.indice_frase))
-        conn.commit()
-        cursor.close()
-        return {"status": "success", "message": "Progresso salvo!"}
-    except Exception as e:
-        return {"status": "erro", "detalhes": str(e)}
-    finally:
-        if conn and conn.is_connected():
-            conn.close() # GARANTE que a conexão feche
+def _processar_pdf_completo(contents, filename, progress_callback=None, stage_callback=None):
+    """Executa o pipeline existente de PDF sem alterar suas regras de extração."""
+    blocos = extrair_blocos_pdf(contents, progress_callback=progress_callback)
+    if stage_callback:
+        stage_callback("rebuilding")
+    estrutura = reconstruir_estrutura_pdf(blocos)
+    texto_limpo = "\n\n".join(item["texto"] for item in estrutura)
+    if stage_callback:
+        stage_callback("filtering")
+    resultado_leitura = filtrar_estrutura_para_leitura(estrutura)
+    sentences = resultado_leitura["frases_filtradas"]
+    return {
+        "filename": filename,
+        "total_frases": len(sentences),
+        "total_frases_originais": len(resultado_leitura["frases_originais"]),
+        "texto_limpo": texto_limpo,
+        "sentences": sentences,
+        "sentences_original": resultado_leitura["frases_originais"],
+        "classificacoes_conteudo": resultado_leitura["classificacoes"],
+        "estrutura": estrutura,
+    }
+
 
 @app.post("/upload-pdf/")
 async def processar_pdf(file: UploadFile = File()):
@@ -834,24 +834,64 @@ async def processar_pdf(file: UploadFile = File()):
 
     try:
         contents = await file.read()
-        blocos = extrair_blocos_pdf(contents)
-        estrutura = reconstruir_estrutura_pdf(blocos)
-        texto_limpo = "\n\n".join(item["texto"] for item in estrutura)
-        resultado_leitura = filtrar_estrutura_para_leitura(estrutura)
-        sentences = resultado_leitura["frases_filtradas"]
-
-        return {
-            "filename": file.filename,
-            "total_frases": len(sentences),
-            "total_frases_originais": len(resultado_leitura["frases_originais"]),
-            "texto_limpo": texto_limpo,
-            "sentences": sentences,
-            "sentences_original": resultado_leitura["frases_originais"],
-            "classificacoes_conteudo": resultado_leitura["classificacoes"],
-            "estrutura": estrutura,
-        }
+        return _processar_pdf_completo(contents, file.filename)
     except Exception as e:
         return {"error": str(e)}
+
+
+async def _stream_pdf_processing(contents, filename):
+    """Envia eventos NDJSON durante a extração e o processamento final."""
+    events = queue.Queue()
+
+    def report_pages(page, total_pages):
+        events.put({
+            "type": "progress",
+            "stage": "extracting",
+            "page": page,
+            "total_pages": total_pages,
+        })
+
+    def report_stage(stage):
+        events.put({"type": "progress", "stage": stage})
+
+    def worker():
+        try:
+            result = _processar_pdf_completo(
+                contents,
+                filename,
+                progress_callback=report_pages,
+                stage_callback=report_stage,
+            )
+            events.put({"type": "result", "data": result})
+        except Exception as exc:
+            events.put({"type": "error", "message": str(exc) or "Falha ao processar o PDF."})
+        finally:
+            events.put(None)
+
+    # O processamento pesado roda fora do event loop para permitir o streaming.
+    threading.Thread(target=worker, daemon=True).start()
+
+    while True:
+        event = await asyncio.to_thread(events.get)
+        if event is None:
+            break
+        yield json.dumps(event, ensure_ascii=False) + "\n"
+
+
+@app.post("/upload-pdf-progress/")
+async def processar_pdf_com_progresso(file: UploadFile = File()):
+    if fitz is None:
+        raise HTTPException(status_code=400, detail="Instale PyMuPDF: pip install pymupdf")
+
+    contents = await file.read()
+    return StreamingResponse(
+        _stream_pdf_processing(contents, file.filename),
+        media_type="application/x-ndjson",
+        headers={
+            "Cache-Control": "no-cache, no-transform",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 if __name__ == "__main__":
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)

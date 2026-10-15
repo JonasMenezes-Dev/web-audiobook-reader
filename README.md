@@ -20,22 +20,19 @@ O projeto separa cliente e servidor:
 * Backend (Motor): FastAPI (Python) — framework de alta performance para a construção da API.
 * Extração PDF: PyMuPDF fornece posição, fonte, tamanho e estilo de cada span; o backend reconstrói linhas, parágrafos e títulos, preservando também a estrutura por trecho.
 * Validação de Dados: Pydantic — garante o contrato de dados entre o JS e o Python (evitando erros 422).
-* Banco de Dados: MySQL — persistência relacional do progresso de leitura.
-* Comunicação: Fetch API com CORS habilitado para integração entre origens.
+* Comunicação: Fetch/XHR com CORS habilitado para integração entre origens; o upload de PDF usa streaming de progresso (`POST /upload-pdf-progress/`).
+* Deploy: blueprint do Render (`render.yaml`) para o backend e `config.js` para apontar a URL pública da API no frontend.
 
-# Fluxo de Persistência Híbrida
-Diferente de leitores comuns, o AudioLivro Pro trabalha com duas camadas de salvamento:
+# Persistência de Progresso
 
-* **Local:** utiliza `localStorage` para acesso imediato no navegador (funciona offline).
-* **Remota:** envia via `POST /salvar` o progresso exato (ID do livro e índice da frase) para o servidor Python, que armazena no MySQL. Isso permite que o usuário nunca perca sua posição na leitura, mesmo trocando de dispositivo (em ambiente deployado).
+O progresso de leitura fica salvo **localmente no navegador** (`localStorage`), o que mantém o app funcionando offline e sem dependência de banco de dados. Não há mais persistência em MySQL.
 
 
 # Como Rodar
 
-O passo a passo completo (banco, backend e frontend) está em **[COMO_INICIAR.md](COMO_INICIAR.md)**. Resumo:
+O passo a passo completo (backend e frontend) está em **[COMO_INICIAR.md](COMO_INICIAR.md)**. Resumo:
 
-1. Criar o banco `audiolivro_db` e a tabela `progresso` no MySQL.
-2. Entrar em `Backend/`, criar o ambiente virtual e instalar as dependências:
+1. Entrar em `Backend/`, criar o ambiente virtual e instalar as dependências:
 
    ```powershell
    cd Backend
@@ -44,10 +41,9 @@ O passo a passo completo (banco, backend e frontend) está em **[COMO_INICIAR.md
    pip install -r requirements.txt
    ```
 
-3. Ajustar as credenciais do MySQL no bloco `db_config` de `Backend/main.py`.
-4. Subir o servidor: `uvicorn main:app --reload` (porta 8000).
-5. Na raiz do projeto, servir o frontend: `python -m http.server 5500`.
-6. Abrir `http://127.0.0.1:5500/index.html` no navegador.
+2. Subir o servidor: `uvicorn main:app --reload` (porta 8000).
+3. Na raiz do projeto, servir o frontend: `python -m http.server 5500`.
+4. Abrir `http://127.0.0.1:5500/index.html` no navegador.
 
 # Como usar
 

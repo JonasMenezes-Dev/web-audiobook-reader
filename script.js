@@ -4,6 +4,11 @@ const DEBUG = true;
 
 const STORAGE_KEY = 'audiolivro_v1';
 
+// Em produção, substitua pela URL pública do backend hospedado.
+// O endereço local continua como padrão para desenvolvimento no PC.
+const API_BASE_URL = window.AUDIOLIVRO_API_URL ||
+    (['localhost', '127.0.0.1'].includes(window.location.hostname) ? 'http://127.0.0.1:8000' : '');
+
 // Velocidades disponíveis. 1.25x entra na mesma estrutura das demais.
 const SPEEDS = [1.0, 1.25, 1.5, 2.0, 0.7];
 
@@ -46,52 +51,220 @@ function getBestVoice() {
 window.onload = loadRecents;
 
 // Gerenciador de arquivos
-document.getElementById('file-input').onchange = e => {
+const fileInput = document.getElementById('file-input');
+
+fileInput.onchange = async e => {
     const file = e.target.files[0];
     if (!file) return;
 
-    if (file.type === 'application/pdf') {
-        loadPDF(file);
-    } else if (file.type === 'text/plain') {
-        loadTXT(file);
-    } else {
-        alert('Formato não suportado. Use PDF ou TXT.');
+    try {
+        if (file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf')) {
+            await loadPDF(file);
+        } else if (file.type === 'text/plain' || file.name.toLowerCase().endsWith('.txt')) {
+            loadTXT(file);
+        } else {
+            alert('Formato não suportado. Use PDF ou TXT.');
+        }
+    } finally {
+        // Permite selecionar o mesmo arquivo novamente caso seja necessário.
+        fileInput.value = '';
     }
 };
 
+function showLoading(title, message, progress = null) {
+    const overlay = document.getElementById('loading-overlay');
+    if (!overlay) return;
+    document.getElementById('loading-title').textContent = title;
+    document.getElementById('loading-message').textContent = message;
+    setLoadingProgress(progress);
+    overlay.hidden = false;
+    document.body.setAttribute('aria-busy', 'true');
+}
 
-async function loadPDF(file) {
-    const formData = new FormData();
-    formData.append('file', file);
-    try {
-        const response = await fetch('http://127.0.0.1:8000/upload-pdf/', {
-            method: 'POST',
-            body: formData
-        });
-        const data = await response.json();
-        if (data.error) {
-            throw new Error(data.error);
-        }
-        if (!data.sentences || !data.sentences.length) {
-            throw new Error('Backend não retornou frases utilizáveis.');
-        }
-        // O backend envia 'sentences' já filtradas (propaganda/lixo técnico removidos).
-        processText(data.texto_limpo || data.sentences.join(' '), data.filename, data.sentences);
-    } catch (err) {
-        console.error('PDF backend request failed:', err);
-        alert('Não foi possível processar o PDF pelo servidor. Verifique se o backend está disponível e tente novamente.');
+function setLoadingProgress(progress) {
+    const bar = document.querySelector('#loading-progress span');
+    const value = document.getElementById('loading-percent');
+    const container = document.getElementById('loading-progress');
+    if (progress === null || progress === undefined || !Number.isFinite(progress)) {
+        if (value) value.hidden = true;
+        if (container) container.classList.add('is-indeterminate');
+        if (bar) bar.style.width = '35%';
         return;
     }
+
+    const bounded = Math.max(0, Math.min(100, progress));
+    if (value) {
+        value.hidden = false;
+        value.textContent = Math.round(bounded) + '%';
+    }
+    if (container) container.classList.remove('is-indeterminate');
+    if (bar) bar.style.width = bounded + '%';
 }
 
+function updateLoading(title, message, progress = null) {
+    const titleEl = document.getElementById('loading-title');
+    const messageEl = document.getElementById('loading-message');
+    if (titleEl) titleEl.textContent = title;
+    if (messageEl) messageEl.textContent = message;
+    setLoadingProgress(progress);
+}
+
+function hideLoading() {
+    const overlay = document.getElementById('loading-overlay');
+    if (overlay) overlay.hidden = true;
+    document.body.removeAttribute('aria-busy');
+}
+
+function loadPDF(file) {
+    if (!API_BASE_URL) {
+        alert('O servidor de PDFs ainda não foi configurado. Configure a URL pública em config.js.');
+        return Promise.resolve();
+    }
+
+    return new Promise((resolve, reject) => {
+        const formData = new FormData();
+        formData.append('file', file);
+        const xhr = new XMLHttpRequest();
+        let responseOffset = 0;
+        let pendingText = '';
+        let resultReceived = false;
+
+        showLoading('Enviando seu PDF', '0% do arquivo enviado', 0);
+
+        function handleEvent(event) {
+            if (!event || typeof event !== 'object') return;
+            if (event.type === 'progress') {
+                if (event.stage === 'extracting') {
+                    if (event.total_pages > 0) {
+                        const pagePct = (event.page / event.total_pages) * 100;
+                        updateLoading(
+                            'Extraindo texto do PDF',
+                            `Página ${event.page} de ${event.total_pages} processada`,
+                            pagePct
+                        );
+                    } else {
+                        updateLoading('Analisando PDF', 'Preparando a extração das páginas…', null);
+                    }
+                } else if (event.stage === 'rebuilding') {
+                    updateLoading(
+                        'Organizando o conteúdo',
+                        'A extração das páginas terminou. Reconstruindo parágrafos e títulos…',
+                        null
+                    );
+                } else if (event.stage === 'filtering') {
+                    updateLoading(
+                        'Finalizando o audiolivro',
+                        'Aplicando os filtros de leitura e preparando as frases…',
+                        null
+                    );
+                }
+                return;
+            }
+
+            if (event.type === 'error') {
+                throw new Error(event.message || 'Falha ao processar o PDF.');
+            }
+
+            if (event.type === 'result') {
+                const data = event.data;
+                if (!data || !data.sentences || !data.sentences.length) {
+                    throw new Error('O servidor não retornou frases utilizáveis.');
+                }
+                resultReceived = true;
+                updateLoading('Audiolivro pronto', 'Abrindo o leitor…', 100);
+                processText(data.texto_limpo || data.sentences.join(' '), data.filename || file.name, data.sentences);
+            }
+        }
+
+        function consumeResponseChunk() {
+            const chunk = xhr.responseText.slice(responseOffset);
+            responseOffset = xhr.responseText.length;
+            pendingText += chunk;
+            const lines = pendingText.split('\n');
+            pendingText = lines.pop() || '';
+            for (const line of lines) {
+                if (!line.trim()) continue;
+                handleEvent(JSON.parse(line));
+            }
+        }
+
+        xhr.upload.onprogress = event => {
+            if (event.lengthComputable) {
+                const pct = event.total ? (event.loaded / event.total) * 100 : 0;
+                updateLoading('Enviando seu PDF', `${Math.round(pct)}% do arquivo enviado`, pct);
+            }
+        };
+
+        xhr.upload.onload = () => {
+            updateLoading('PDF enviado', 'Aguardando o servidor iniciar a extração…', null);
+        };
+
+        xhr.onprogress = () => {
+            try {
+                consumeResponseChunk();
+            } catch (err) {
+                xhr.abort();
+                reject(err);
+            }
+        };
+
+        xhr.onerror = () => reject(new Error('Falha de conexão com o servidor.'));
+        xhr.onabort = () => reject(new Error('O processamento do PDF foi interrompido.'));
+        xhr.onload = () => {
+            try {
+                consumeResponseChunk();
+                if (pendingText.trim()) handleEvent(JSON.parse(pendingText));
+                if (xhr.status < 200 || xhr.status >= 300) {
+                    throw new Error(`O servidor respondeu com status ${xhr.status}`);
+                }
+                if (!resultReceived) {
+                    throw new Error('O servidor encerrou a resposta sem retornar o PDF processado.');
+                }
+                resolve();
+            } catch (err) {
+                reject(err);
+            }
+        };
+
+        xhr.open('POST', `${API_BASE_URL}/upload-pdf-progress/`);
+        xhr.setRequestHeader('Accept', 'application/x-ndjson');
+        xhr.send(formData);
+    }).catch(err => {
+        console.error('PDF backend request failed:', err);
+        alert('Não foi possível processar o PDF pelo servidor. Verifique sua conexão e tente novamente.');
+    }).finally(hideLoading);
+}
 
 function loadTXT(file) {
+    showLoading('Abrindo seu texto', 'Preparando a leitura do arquivo…', 0);
     const reader = new FileReader();
-    reader.onload = e => processText(e.target.result, file.name);
-    reader.onerror = () => alert("Erro ao ler o arquivo TXT.");
+
+    reader.onprogress = event => {
+        if (event.lengthComputable) {
+            const pct = event.total ? (event.loaded / event.total) * 100 : 0;
+            updateLoading('Abrindo seu texto', `${Math.round(pct)}% do arquivo lido`, pct);
+        }
+    };
+
+    reader.onload = e => {
+        try {
+            updateLoading('Preparando a leitura', 'Texto carregado. Organizando o conteúdo…', null);
+            processText(e.target.result, file.name);
+        } catch (err) {
+            console.error('TXT processing failed:', err);
+            alert('Não foi possível abrir este arquivo TXT.');
+        } finally {
+            hideLoading();
+        }
+    };
+
+    reader.onerror = () => {
+        hideLoading();
+        alert('Erro ao ler o arquivo TXT.');
+    };
+
     reader.readAsText(file);
 }
-
 
 // =====================================================================
 // Camada de normalização linguística (conservadora).
@@ -308,9 +481,8 @@ function saveProgress() {
         rate: state.rate,
         date: Date.now()
     };
+    // O progresso fica somente neste navegador/dispositivo.
     localStorage.setItem(`${STORAGE_KEY}_${state.title}`, JSON.stringify(data));
-
-    salvarNoMySQL(state.title, state.currentIdx); // salva no MySQL também
 }
 
 
@@ -424,24 +596,4 @@ function handleProgClick(e) {
     const pct = e.offsetX / track.offsetWidth;
     const alvo = Math.min(state.sentences.length - 1, Math.floor(pct * state.sentences.length));
     jumpTo(alvo, true);
-}
-
-// Conexão com o backend para salvar o progresso no MySQL.
-async function salvarNoMySQL(idLivro, indice) {
-    try {
-        const url = 'http://127.0.0.1:8000/salvar';
-
-        await fetch(url, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-                id_Livro: idLivro,
-                indice_frase: indice
-            })
-        });
-    } catch {
-        console.warn('Servidor python offline. Progresso salvo apenas no navegador');
-    }
 }

@@ -1,6 +1,7 @@
 fastapi
+python-multipart
 uvicorn[standard]
-mysql-connector-python
+pypdf
 
 # Desenvolvimento / testes
 pytest
