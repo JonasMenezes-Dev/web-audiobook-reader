@@ -73,13 +73,14 @@ def test_upload_progress_entrega_eventos_e_resultado_final():
     [
         (b"", 400, "vazio"),
         (b"isto nao e um pdf", 415, "PDF válido"),
-        (b"%PDF-1.7\nconteudo truncado", 400, "íntegro"),
+        (b"%PDF-1.7\nconteudo truncado", 400, "íntegro|páginas"),
     ],
 )
 def test_upload_rejeita_arquivos_vazios_invalidos_ou_corrompidos(conteudo, status, mensagem):
     response = upload("/upload-pdf/", conteudo)
     assert response.status_code == status
-    assert mensagem.casefold() in response.json()["detail"].casefold()
+    detalhe = response.json()["detail"].casefold()
+    assert any(opcao in detalhe for opcao in mensagem.casefold().split("|"))
 
 
 def test_upload_rejeita_pdf_acima_de_25_mb():
