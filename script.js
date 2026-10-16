@@ -676,15 +676,15 @@ function goTo(i) {
 
 function scrollToActive() {
     const active = document.getElementById(`s-${state.currentIdx}`);
-    if (!active) return;
-    // Desliga o 'scroll-behavior: smooth' do container só durante o salto:
-    // rolagens suaves concorrentes (clique vs. avanço do áudio) se cancelavam,
-    // fazendo o clique não levar ao trecho escolhido.
     const area = document.getElementById('reading-area');
-    const previous = area.style.scrollBehavior;
-    area.style.scrollBehavior = 'auto';
-    active.scrollIntoView({ block: 'center' });
-    area.style.scrollBehavior = previous;
+    if (!active || !area) return;
+
+    // Rola apenas a área do leitor; scrollIntoView também pode mover a página inteira.
+    const areaRect = area.getBoundingClientRect();
+    const activeRect = active.getBoundingClientRect();
+    const targetTop = area.scrollTop + activeRect.top - areaRect.top -
+        (area.clientHeight / 2) + (activeRect.height / 2);
+    area.scrollTo({ top: Math.max(0, targetTop), behavior: 'auto' });
 }
 
 
@@ -702,7 +702,11 @@ function highlight(scroll = true, instant = false) {
             // Saltos feitos pelo usuário continuam levando diretamente ao destino.
             const outsideComfortZone = activeRect.top < areaRect.top + 72 || activeRect.bottom > areaRect.bottom - 72;
             if (instant) scrollToActive();
-            else if (outsideComfortZone) active.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            else if (outsideComfortZone) {
+                const targetTop = area.scrollTop + activeRect.top - areaRect.top -
+                    (area.clientHeight / 2) + (activeRect.height / 2);
+                area.scrollTo({ top: Math.max(0, targetTop), behavior: 'smooth' });
+            }
         }
     }
 
