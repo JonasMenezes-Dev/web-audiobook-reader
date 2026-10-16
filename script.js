@@ -129,6 +129,7 @@ document.addEventListener('visibilitychange', () => {
 
 // Gerenciador de arquivos
 const fileInput = document.getElementById('file-input');
+fileInput.addEventListener('cancel', () => { requestedResumeTitle = ''; });
 
 fileInput.onchange = async e => {
     const file = e.target.files[0];
@@ -512,8 +513,8 @@ function detectChapters(sentences) {
     sentences.forEach((raw, index) => {
         const title = String(raw || '').trim();
         if (!title || title.length > 100) return;
-        const namedHeading = /^(?:cap[ií]tulo|chapter|parte|se[cç][aã]o|unidade|m[oó]dulo|ap[eê]ndice|introdu[cç][aã]o|conclus[aã]o|refer[eê]ncias|bibliografia)\\b/i.test(title);
-        const numberedHeading = /^\\d+(?:\\.\\d+){0,4}\\.?\\s+\\S/.test(title);
+        const namedHeading = /^(?:cap[ií]tulo|chapter|parte|se[cç][aã]o|unidade|m[oó]dulo|ap[eê]ndice|introdu[cç][aã]o|conclus[aã]o|refer[eê]ncias|bibliografia)\b/i.test(title);
+        const numberedHeading = /^\d+(?:\.\d+){0,4}\.?\s+\S/.test(title);
         const letters = title.match(/[A-Za-zÀ-ÿ]/g) || [];
         const uppercaseHeading = title.length <= 65 && letters.length >= 4 &&
             title === title.toLocaleUpperCase('pt-BR') && !/[.!?]$/.test(title);
