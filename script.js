@@ -25,7 +25,8 @@ let state = {
     currentIdx: 0,
     rate: 1.0,
     playing: false,
-    chapters: []
+    chapters: [],
+    paragraphGroups: []
 };
 
 function log(...args) {
@@ -258,7 +259,7 @@ function loadPDF(file) {
                 }
                 resultReceived = true;
                 updateLoading('Audiolivro pronto', 'Abrindo o leitor…', 100);
-                processText(data.texto_limpo || data.sentences.join(' '), data.filename || file.name, data.sentences);
+                processText(data.texto_limpo || data.sentences.join(' '), data.filename || file.name, data.sentences, { structure: data.estrutura, originalSentences: data.sentences_original, classifications: data.classificacoes_conteudo });
             }
         }
 
@@ -463,7 +464,7 @@ function splitIntoSentences(text) {
 }
 
 
-function processText(text, title, sentences) {
+function processText(text, title, sentences, formatting = null) {
     state.title = title;
     log('[PDF]', 'Conteúdo recebido:', text);
 
@@ -474,6 +475,7 @@ function processText(text, title, sentences) {
         : splitIntoSentences(normalizeText(text));
 
     state.sentences = base;
+    state.paragraphGroups = buildReadingParagraphGroups(text, formatting, state.sentences);
 
     if (state.sentences.length === 0) {
         alert('Não foi possível identificar frases no arquivo.');
@@ -567,18 +569,90 @@ function goToChapter(value) {
     }
 }
 
+// Constrói grupos visuais sem alterar os índices usados pelo player/TTS.
+function buildParagraphGroups(paragraphSpecs, totalSentences) {
+    const specs = Array.isArray(paragraphSpecs) ? paragraphSpecs : [];
+    const total = specs.reduce((sum, item) => sum + Math.max(0, item.count || 0), 0);
+    if (!specs.length || total !== totalSentences) {
+        return totalSentences ? [{ start: 0, end: totalSentences, type: 'paragrafo' }] : [];
+    }
+
+    let cursor = 0;
+    return specs.filter(item => item.count > 0).map(item => {
+        const group = {
+            start: cursor,
+            end: cursor + item.count,
+            type: item.type === 'titulo' ? 'titulo' : 'paragrafo'
+        };
+        cursor = group.end;
+        return group;
+    });
+}
+
+function looksLikeHeading(text) {
+    const title = String(text || '').trim();
+    if (!title || title.length > 80) return false;
+    return /^(?:cap[ií]tulo|chapter|parte|se[cç][aã]o|unidade|m[oó]dulo|ap[eê]ndice|introdu[cç][aã]o|conclus[aã]o|refer[eê]ncias|bibliografia)\b/i.test(title) ||
+        /^\d+(?:\.\d+){0,4}\.?\s+\S/.test(title) ||
+        (title.length <= 65 && (title.match(/[A-Za-zÀ-ÿ]/g) || []).length >= 4 &&
+         title === title.toLocaleUpperCase('pt-BR') && !/[.!?]$/.test(title));
+}
+
+function buildReadingParagraphGroups(text, formatting, visibleSentences) {
+    // PDFs já chegam com parágrafos reconstruídos pelo PyMuPDF.
+    if (formatting && Array.isArray(formatting.structure) && formatting.structure.length &&
+        Array.isArray(formatting.originalSentences) &&
+        Array.isArray(formatting.classifications) &&
+        formatting.originalSentences.length === formatting.classifications.length) {
+        let originalCursor = 0;
+        const specs = [];
+        for (const item of formatting.structure) {
+            const originalCount = splitIntoSentences(item.texto || '').length;
+            const slice = formatting.classifications.slice(originalCursor, originalCursor + originalCount);
+            const visibleCount = slice.filter(entry => !entry.ignorar).length;
+            originalCursor += originalCount;
+            if (visibleCount > 0) {
+                specs.push({ count: visibleCount, type: item.tipo === 'titulo' ? 'titulo' : 'paragrafo' });
+            }
+        }
+        if (originalCursor === formatting.originalSentences.length) {
+            return buildParagraphGroups(specs, visibleSentences.length);
+        }
+    }
+
+    // TXT: linhas em branco delimitam parágrafos. Quebras simples são tratadas
+    // como possíveis quebras de linha do documento, evitando uma linha por frase.
+    const chunks = String(text || '').split(/\n\s*\n+/).map(chunk => chunk.trim()).filter(Boolean);
+    const specs = chunks.map(chunk => ({
+        count: splitIntoSentences(normalizeText(chunk)).length,
+        type: looksLikeHeading(chunk) ? 'titulo' : 'paragrafo'
+    }));
+    return buildParagraphGroups(specs, visibleSentences.length);
+}
+
 function renderText() {
     const container = document.getElementById('reading-inner');
     container.replaceChildren();
 
-    state.sentences.forEach((sentence, index) => {
-        const span = document.createElement('span');
-        span.className = 'sent';
-        span.id = `s-${index}`;
-        span.textContent = sentence;
-        span.addEventListener('click', () => goTo(index));
-        container.appendChild(span);
-        container.appendChild(document.createTextNode(' '));
+    const groups = state.paragraphGroups.length
+        ? state.paragraphGroups
+        : [{ start: 0, end: state.sentences.length, type: 'paragrafo' }];
+
+    groups.forEach(group => {
+        const paragraph = document.createElement(group.type === 'titulo' ? 'h2' : 'p');
+        paragraph.className = group.type === 'titulo'
+            ? 'reading-paragraph reading-heading'
+            : 'reading-paragraph';
+        for (let index = group.start; index < group.end; index++) {
+            const span = document.createElement('span');
+            span.className = 'sent';
+            span.id = `s-${index}`;
+            span.textContent = state.sentences[index];
+            span.addEventListener('click', () => goTo(index));
+            paragraph.appendChild(span);
+            if (index < group.end - 1) paragraph.appendChild(document.createTextNode(' '));
+        }
+        container.appendChild(paragraph);
     });
 }
 
