@@ -694,3 +694,42 @@ def test_frontend_sem_pdfjs_e_logs_debug_desativados():
     html = (Path(ROOT) / "index.html").read_text(encoding="utf-8")
     assert "const DEBUG = false;" in src
     assert "pdf.min.js" not in html
+
+
+def test_detect_chapters_frontend_regressoes():
+    """A navegação detecta títulos comuns e ignora frases comuns."""
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("Node.js não está disponível para testar a detecção de capítulos")
+
+    script = SCRIPT_JS.read_text(encoding="utf-8")
+    function = re.search(
+        r"function detectChapters\\(sentences\\) \\{[\\s\\S]*?\\n\\}",
+        script,
+    )
+    assert function, "detectChapters não encontrada em script.js"
+    entradas = [
+        "CAPÍTULO 1",
+        "1. Introdução",
+        "Este é um parágrafo normal com uma frase completa.",
+        "2.4.5 Interrupções",
+        "CONCLUSÃO",
+    ]
+    programa = (
+        f"{function.group(0)}\\n"
+        f"const resultado = detectChapters({json.dumps(entradas, ensure_ascii=True)});\\n"
+        "process.stdout.write(JSON.stringify(resultado.map(item => item.index)));"
+    )
+    resultado = subprocess.run(
+        [node, "-e", programa], cwd=ROOT, check=True, capture_output=True,
+        text=True, encoding="utf-8",
+    )
+    assert json.loads(resultado.stdout) == [0, 1, 3, 4]
+
+
+def test_retoma_progresso_do_mesmo_arquivo():
+    """A seleção de um livro recente solicita o arquivo original para restaurar o índice salvo."""
+    script = SCRIPT_JS.read_text(encoding="utf-8")
+    assert "requestedResumeTitle = item.title" in script
+    assert "state.currentIdx = Math.max(0, Math.min(savedIndex, state.sentences.length - 1))" in script
+    assert "window.addEventListener('pagehide', saveProgress)" in script
