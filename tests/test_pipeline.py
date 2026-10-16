@@ -750,3 +750,19 @@ def test_destaque_da_leitura_acompanha_cada_frase_sem_rolagem_manual():
     assert "scrollToActive(instant ? 'auto' : 'smooth')" in highlight_fn
     assert "outsideComfortZone" not in highlight_fn
     assert "active.classList.add('reading')" in highlight_fn
+
+
+
+def test_tema_claro_tem_alternancia_persistente_e_estilos_de_leitura():
+    html = (Path(ROOT) / "index.html").read_text(encoding="utf-8")
+    css = (Path(ROOT) / "style.css").read_text(encoding="utf-8")
+    script = SCRIPT_JS.read_text(encoding="utf-8")
+
+    assert 'id="theme-toggle"' in html
+    assert 'onclick="toggleTheme()"' in html
+    assert 'body[data-theme="light"]' in css
+    assert 'body[data-theme="light"] .sent.reading' in css
+    assert "const THEME_STORAGE_KEY = 'audiolivro_theme_v1';" in script
+    assert "localStorage.setItem(THEME_STORAGE_KEY, nextTheme)" in script
+    assert "function toggleTheme()" in script
+    assert "applyTheme(localStorage.getItem(THEME_STORAGE_KEY) || 'dark')" in script
