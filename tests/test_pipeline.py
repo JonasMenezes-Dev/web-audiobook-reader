@@ -704,7 +704,7 @@ def test_detect_chapters_frontend_regressoes():
 
     script = SCRIPT_JS.read_text(encoding="utf-8")
     function = re.search(
-        r"function detectChapters\\(sentences\\) \\{[\\s\\S]*?\\n\\}",
+        r"function detectChapters\(sentences\) \{[\s\S]*?\n\}",
         script,
     )
     assert function, "detectChapters não encontrada em script.js"
@@ -716,8 +716,8 @@ def test_detect_chapters_frontend_regressoes():
         "CONCLUSÃO",
     ]
     programa = (
-        f"{function.group(0)}\\n"
-        f"const resultado = detectChapters({json.dumps(entradas, ensure_ascii=True)});\\n"
+        f"{function.group(0)}\n"
+        f"const resultado = detectChapters({json.dumps(entradas, ensure_ascii=True)});\n"
         "process.stdout.write(JSON.stringify(resultado.map(item => item.index)));"
     )
     resultado = subprocess.run(
