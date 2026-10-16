@@ -87,6 +87,13 @@
             <div class="header-spacer" aria-hidden="true"></div>
         </header>
 
+        <div class="chapter-toolbar" aria-label="Navegação por seções">
+            <label for="chapter-select">IR PARA SEÇÃO</label>
+            <select id="chapter-select" aria-label="Ir para capítulo ou seção" onchange="goToChapter(this.value)" disabled>
+                <option value="">Detectando seções…</option>
+            </select>
+        </div>
+
         <div id="reading-area" class="reading-area">
             <div class="reading-inner" id="reading-inner"></div>
         </div>

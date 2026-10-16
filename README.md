@@ -8,7 +8,9 @@ Aplicação web para transformar arquivos PDF e TXT em audiolivros, com leitura 
 - Extração estrutural de PDF com PyMuPDF, preservando a ordem visual, títulos e estilos.
 - Filtro de propaganda e de resíduos técnicos no processamento do PDF.
 - Narração com Web Speech API e velocidades de 0,7x, 1x, 1,25x, 1,5x e 2x.
-- Progresso e livros recentes salvos no navegador.
+- Progresso e livros recentes salvos no navegador, com retomada no trecho exato após selecionar novamente o arquivo original.
+- Navegação por capítulos e seções detectados automaticamente no texto.
+- Destaque de leitura com rolagem mais estável, movendo a página apenas quando o trecho se aproxima dos limites visíveis.
 - Indicador visual durante o envio e processamento do arquivo.
 - Interface responsiva com cartões de livros recentes adaptáveis a telas estreitas, sem ultrapassar a largura disponível.
 - Controles do player com ícones SVG alinhados e layout adaptado para desktop e celular.
