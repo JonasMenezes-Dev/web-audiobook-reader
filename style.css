@@ -137,8 +137,9 @@ svg { display:block; width:100%; height:100%; }
     overflow-wrap:anywhere; transition:color .2s ease, background .2s ease, box-shadow .2s ease;
 }
 .sent:hover { color:var(--text); background:rgba(255,255,255,.045); }
+.sent.reading { color:#fffaf3; background:rgba(213,161,95,.23); box-shadow:0 0 0 2px rgba(213,161,95,.08); }
 .reading-heading .sent { color:inherit; font:inherit; }
-.reading-heading .sent.reading { color:#fffaf3; background:rgba(213,161,95,.23); box-shadow:0 0 0 2px rgba(213,161,95,.08); }
+.reading-heading .sent.reading { color:#fffaf3; }
 .player {
     position:fixed; z-index:100; right:0; bottom:0; left:0;
     padding:17px max(24px, env(safe-area-inset-right)) calc(17px + env(safe-area-inset-bottom)) max(24px, env(safe-area-inset-left));
