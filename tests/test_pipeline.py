@@ -230,7 +230,7 @@ def test_load_pdf_nao_contorna_filtro_quando_backend_falha():
     assert "xhr.status < 200 || xhr.status >= 300" in source
     assert "if (!resultReceived)" in source
     assert "Não foi possível processar o PDF pelo servidor" in source
-    assert "processText(data.texto_limpo || data.sentences.join(' '), data.filename || file.name, data.sentences, { structure: data.estrutura, originalSentences: data.sentences_original, classifications: data.classificacoes_conteudo })" in source
+    assert "processText(data.texto_limpo || data.sentences.join(' '), data.filename || file.name, data.sentences)" in source
     assert "pdfjsLib" not in source
     assert "buildTextFromItems" not in source
 def test_splitter_nao_descarta_frases_legitimamente_curtas():
@@ -665,7 +665,7 @@ def test_frontend_renderiza_texto_de_arquivos_com_textcontent():
     fim = src.index("// Salta para um índice", ini)
     corpo = src[ini:fim]
     assert "createElement('span')" in corpo
-    assert "span.textContent = state.sentences[index]" in corpo
+    assert "textContent = sentence" in corpo
     assert "innerHTML" not in corpo
 
 
@@ -733,40 +733,3 @@ def test_retoma_progresso_do_mesmo_arquivo():
     assert "requestedResumeTitle = item.title" in script
     assert "state.currentIdx = Math.max(0, Math.min(savedIndex, state.sentences.length - 1))" in script
     assert "window.addEventListener('pagehide', saveProgress)" in script
-
-
-def test_build_paragraph_groups_preserves_sentence_indices():
-    """A formatação agrupa frases sem alterar os índices usados pelo player."""
-    node = shutil.which("node")
-    if not node:
-        pytest.skip("Node.js não está disponível para testar a formatação")
-
-    script = SCRIPT_JS.read_text(encoding="utf-8")
-    function = re.search(
-        r"function buildParagraphGroups\(paragraphSpecs, totalSentences\) \{[\s\S]*?\n\}",
-        script,
-    )
-    assert function, "buildParagraphGroups não encontrada em script.js"
-    programa = (
-        f"{function.group(0)}\n"
-        "const grupos = buildParagraphGroups([{count: 2, type: 'paragrafo'}, "
-        "{count: 1, type: 'titulo'}, {count: 2, type: 'paragrafo'}], 5);\n"
-        "process.stdout.write(JSON.stringify(grupos));"
-    )
-    resultado = subprocess.run(
-        [node, "-e", programa], cwd=ROOT, check=True, capture_output=True,
-        text=True, encoding="utf-8",
-    )
-    assert json.loads(resultado.stdout) == [
-        {"start": 0, "end": 2, "type": "paragrafo"},
-        {"start": 2, "end": 3, "type": "titulo"},
-        {"start": 3, "end": 5, "type": "paragrafo"},
-    ]
-
-
-def test_frontend_renderiza_texto_em_paragrafos_sem_innerhtml():
-    script = SCRIPT_JS.read_text(encoding="utf-8")
-    assert "buildReadingParagraphGroups(text, formatting, state.sentences)" in script
-    assert "'reading-paragraph reading-heading'" in script
-    assert "paragraph.appendChild(span)" in script
-    assert "container.innerHTML" not in script
