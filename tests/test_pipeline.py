@@ -750,7 +750,7 @@ def test_build_paragraph_groups_preserves_sentence_indices():
     programa = (
         f"{function.group(0)}\n"
         "const grupos = buildParagraphGroups([{count: 2, type: 'paragrafo'}, "
-        "{count: 1, type: 'titulo'}, {count: 2, type: 'paragrafo'}], 5);\\n"
+        "{count: 1, type: 'titulo'}, {count: 2, type: 'paragrafo'}], 5);\n"
         "process.stdout.write(JSON.stringify(grupos));"
     )
     resultado = subprocess.run(
