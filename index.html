@@ -92,6 +92,12 @@
         </div>
 
         <footer class="player" aria-label="Controles de reprodução">
+            <div class="voice-controls">
+                <label for="voice-select">VOZ</label>
+                <select id="voice-select" aria-label="Selecionar voz da narração">
+                    <option value="">Carregando vozes disponíveis…</option>
+                </select>
+            </div>
             <div class="player-progress">
                 <div class="prog-track" id="prog-track" role="progressbar" aria-label="Progresso da leitura"
                     aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" onclick="handleProgClick(event)">

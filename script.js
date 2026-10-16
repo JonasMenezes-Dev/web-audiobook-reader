@@ -31,20 +31,87 @@ function log(...args) {
     if (DEBUG) console.log(...args);
 }
 
-// Garante que as vozes sejam carregadas pelo navegador
+// As vozes disponíveis variam conforme o navegador e o dispositivo.
+const VOICE_STORAGE_KEY = 'audiolivro_voice_v1';
 let voices = [];
+
+function voiceKey(voice) {
+    return `${voice.name}::${voice.lang}`;
+}
+
+function isBrazilianPortuguese(voice) {
+    return (voice.lang || '').toLowerCase() === 'pt-br';
+}
+
+function getPreferredVoice() {
+    return voices.find(v => isBrazilianPortuguese(v) && /google/i.test(v.name)) ||
+        voices.find(isBrazilianPortuguese) ||
+        voices.find(v => (v.lang || '').toLowerCase().startsWith('pt-')) ||
+        voices[0];
+}
+
 function loadVoices() {
     voices = window.speechSynthesis.getVoices();
+    const select = document.getElementById('voice-select');
+    if (!select || voices.length === 0) return;
+
+    let savedVoiceKey = '';
+    try {
+        savedVoiceKey = localStorage.getItem(VOICE_STORAGE_KEY) || '';
+    } catch (_) {
+        // A seleção continua funcionando mesmo se o armazenamento estiver indisponível.
+    }
+
+    const previousKey = select.value;
+    const sortedVoices = [...voices].sort((a, b) => {
+        const aPortuguese = (a.lang || '').toLowerCase().startsWith('pt-');
+        const bPortuguese = (b.lang || '').toLowerCase().startsWith('pt-');
+        if (aPortuguese !== bPortuguese) return aPortuguese ? -1 : 1;
+        if (isBrazilianPortuguese(a) !== isBrazilianPortuguese(b)) {
+            return isBrazilianPortuguese(a) ? -1 : 1;
+        }
+        return a.name.localeCompare(b.name);
+    });
+
+    select.replaceChildren();
+    sortedVoices.forEach(voice => {
+        const option = document.createElement('option');
+        option.value = voiceKey(voice);
+        option.textContent = `${voice.name} — ${voice.lang || 'idioma desconhecido'}`;
+        select.appendChild(option);
+    });
+
+    const preferred = getPreferredVoice();
+    const availableKeys = new Set(voices.map(voiceKey));
+    select.value = availableKeys.has(savedVoiceKey) ? savedVoiceKey :
+        availableKeys.has(previousKey) ? previousKey :
+        preferred ? voiceKey(preferred) : voiceKey(voices[0]);
 }
 
 window.speechSynthesis.onvoiceschanged = loadVoices;
 loadVoices();
 
 function getBestVoice() {
-    // Tenta encontrar a voz do Google em português, que é a mais humana
-    return voices.find(v => v.name.includes('Google') && v.lang.includes('pt-BR')) ||
-        voices.find(v => v.lang.includes('pt-BR')) ||
-        voices[0];
+    const select = document.getElementById('voice-select');
+    const selectedKey = select ? select.value : '';
+    return voices.find(voice => voiceKey(voice) === selectedKey) || getPreferredVoice();
+}
+
+const voiceSelect = document.getElementById('voice-select');
+if (voiceSelect) {
+    voiceSelect.addEventListener('change', () => {
+        try {
+            localStorage.setItem(VOICE_STORAGE_KEY, voiceSelect.value);
+        } catch (_) {
+            // Não impede a leitura se o armazenamento estiver indisponível.
+        }
+
+        // Se estiver lendo, aplica a nova voz imediatamente na frase atual.
+        if (state.playing) {
+            cancelSpeech();
+            speak();
+        }
+    });
 }
 
 // Carregar lista inicial
@@ -599,7 +666,7 @@ function speak() {
     utter.voice = getBestVoice(); // Escolhe a voz mais humana disponível
     utter.rate = state.rate;      // Respeita exatamente a velocidade escolhida
     utter.pitch = 1.0;            // Ajuste entre 0.8 e 1.2 para mudar o tom
-    utter.lang = 'pt-BR';
+    utter.lang = utter.voice?.lang || 'pt-BR';
 
     log('[TTS] Trecho ' + String(state.currentIdx).padStart(3, '0'), utter.text);
 
