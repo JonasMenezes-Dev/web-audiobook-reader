@@ -733,3 +733,20 @@ def test_retoma_progresso_do_mesmo_arquivo():
     assert "requestedResumeTitle = item.title" in script
     assert "state.currentIdx = Math.max(0, Math.min(savedIndex, state.sentences.length - 1))" in script
     assert "window.addEventListener('pagehide', saveProgress)" in script
+
+
+def test_destaque_da_leitura_acompanha_cada_frase_sem_rolagem_manual():
+    """Cada avanço do player desloca somente a área de leitura até a frase ativa."""
+    script = SCRIPT_JS.read_text(encoding="utf-8")
+    ini = script.index("function scrollToActive(")
+    fim = script.index("\n\nfunction highlight", ini)
+    scroll_fn = script[ini:fim]
+    highlight_ini = script.index("function highlight(")
+    highlight_fim = script.index("\n\nfunction saveProgress", highlight_ini)
+    highlight_fn = script[highlight_ini:highlight_fim]
+
+    assert "area.scrollTo({ top: Math.max(0, targetTop), behavior })" in scroll_fn
+    assert "active.scrollIntoView" not in scroll_fn
+    assert "scrollToActive(instant ? 'auto' : 'smooth')" in highlight_fn
+    assert "outsideComfortZone" not in highlight_fn
+    assert "active.classList.add('reading')" in highlight_fn

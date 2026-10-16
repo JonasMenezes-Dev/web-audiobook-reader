@@ -600,17 +600,20 @@ function goTo(i) {
 }
 
 
-function scrollToActive() {
+function scrollToActive(behavior = 'smooth') {
     const active = document.getElementById(`s-${state.currentIdx}`);
-    if (!active) return;
-    // Desliga o 'scroll-behavior: smooth' do container só durante o salto:
-    // rolagens suaves concorrentes (clique vs. avanço do áudio) se cancelavam,
-    // fazendo o clique não levar ao trecho escolhido.
     const area = document.getElementById('reading-area');
-    const previous = area.style.scrollBehavior;
-    area.style.scrollBehavior = 'auto';
-    active.scrollIntoView({ block: 'center' });
-    area.style.scrollBehavior = previous;
+    if (!active || !area) return;
+
+    // Rola apenas a área do texto e mantém a frase atual no centro da tela.
+    const areaRect = area.getBoundingClientRect();
+    const activeRect = active.getBoundingClientRect();
+    const targetTop = area.scrollTop
+        + activeRect.top - areaRect.top
+        - (area.clientHeight / 2)
+        + (activeRect.height / 2);
+
+    area.scrollTo({ top: Math.max(0, targetTop), behavior });
 }
 
 
@@ -621,14 +624,9 @@ function highlight(scroll = true, instant = false) {
     if (active) {
         active.classList.add('reading');
         if (scroll) {
-            const area = document.getElementById('reading-area');
-            const areaRect = area.getBoundingClientRect();
-            const activeRect = active.getBoundingClientRect();
-            // Durante a leitura, só rola quando o trecho está perto de sair da área visível.
-            // Saltos feitos pelo usuário continuam levando diretamente ao destino.
-            const outsideComfortZone = activeRect.top < areaRect.top + 72 || activeRect.bottom > areaRect.bottom - 72;
-            if (instant) scrollToActive();
-            else if (outsideComfortZone) active.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            // Acompanhar cada frase lida automaticamente, sem exigir rolagem manual.
+            // Em saltos de seção, a rolagem é imediata; durante a narração, é suave.
+            scrollToActive(instant ? 'auto' : 'smooth');
         }
     }
 
