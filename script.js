@@ -24,7 +24,8 @@ let state = {
     sentences: [],
     currentIdx: 0,
     rate: 1.0,
-    playing: false
+    playing: false,
+    chapters: []
 };
 
 function log(...args) {
@@ -117,6 +118,15 @@ if (voiceSelect) {
 // Carregar lista inicial
 window.onload = loadRecents;
 
+// Ao retomar um livro recente, o navegador pede o arquivo original; o conteúdo não é armazenado.
+let requestedResumeTitle = '';
+
+// Salva novamente quando a página vai para segundo plano ou é fechada.
+window.addEventListener('pagehide', saveProgress);
+document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') saveProgress();
+});
+
 // Gerenciador de arquivos
 const fileInput = document.getElementById('file-input');
 
@@ -125,6 +135,14 @@ fileInput.onchange = async e => {
     if (!file) return;
 
     try {
+        if (requestedResumeTitle) {
+            const expectedTitle = requestedResumeTitle;
+            requestedResumeTitle = '';
+            if (file.name !== expectedTitle) {
+                alert(`Para retomar “${expectedTitle}”, selecione esse mesmo arquivo.`);
+                return;
+            }
+        }
         if (file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf')) {
             await loadPDF(file);
         } else if (file.type === 'text/plain' || file.name.toLowerCase().endsWith('.txt')) {
@@ -480,12 +498,73 @@ function processText(text, title, sentences) {
     document.querySelector('#btn-spd span').textContent = state.rate.toFixed(2) + 'x';
 
     renderText();
+    renderChapterOptions();
     document.getElementById('screen-import').hidden = true;
     document.getElementById('screen-reader').hidden = false;
 
     highlight();
 }
 
+
+// Identifica títulos comuns sem depender do formato original do PDF.
+function detectChapters(sentences) {
+    const chapters = [];
+    sentences.forEach((raw, index) => {
+        const title = String(raw || '').trim();
+        if (!title || title.length > 100) return;
+        const namedHeading = /^(?:cap[ií]tulo|chapter|parte|se[cç][aã]o|unidade|m[oó]dulo|ap[eê]ndice|introdu[cç][aã]o|conclus[aã]o|refer[eê]ncias|bibliografia)\\b/i.test(title);
+        const numberedHeading = /^\\d+(?:\\.\\d+){0,4}\\.?\\s+\\S/.test(title);
+        const letters = title.match(/[A-Za-zÀ-ÿ]/g) || [];
+        const uppercaseHeading = title.length <= 65 && letters.length >= 4 &&
+            title === title.toLocaleUpperCase('pt-BR') && !/[.!?]$/.test(title);
+        if (namedHeading || numberedHeading || uppercaseHeading) {
+            chapters.push({ index, title });
+        }
+    });
+    return chapters;
+}
+
+function renderChapterOptions() {
+    const select = document.getElementById('chapter-select');
+    if (!select) return;
+    state.chapters = detectChapters(state.sentences);
+    select.replaceChildren();
+    if (state.chapters.length === 0) {
+        const option = document.createElement('option');
+        option.value = '';
+        option.textContent = 'Nenhuma seção detectada';
+        select.appendChild(option);
+        select.disabled = true;
+        return;
+    }
+    select.disabled = false;
+    state.chapters.forEach((chapter, position) => {
+        const option = document.createElement('option');
+        option.value = String(chapter.index);
+        const label = chapter.title.length > 54 ? chapter.title.slice(0, 51) + '…' : chapter.title;
+        option.textContent = `${position + 1}. ${label}`;
+        select.appendChild(option);
+    });
+    updateChapterSelection();
+}
+
+function updateChapterSelection() {
+    const select = document.getElementById('chapter-select');
+    if (!select || !state.chapters.length) return;
+    let active = state.chapters[0];
+    for (const chapter of state.chapters) {
+        if (chapter.index > state.currentIdx) break;
+        active = chapter;
+    }
+    select.value = String(active.index);
+}
+
+function goToChapter(value) {
+    const index = Number(value);
+    if (Number.isInteger(index) && state.chapters.some(chapter => chapter.index === index)) {
+        jumpTo(index, true);
+    }
+}
 
 function renderText() {
     const container = document.getElementById('reading-inner');
@@ -541,15 +620,23 @@ function highlight(scroll = true, instant = false) {
     if (active) {
         active.classList.add('reading');
         if (scroll) {
+            const area = document.getElementById('reading-area');
+            const areaRect = area.getBoundingClientRect();
+            const activeRect = active.getBoundingClientRect();
+            // Durante a leitura, só rola quando o trecho está perto de sair da área visível.
+            // Saltos feitos pelo usuário continuam levando diretamente ao destino.
+            const outsideComfortZone = activeRect.top < areaRect.top + 72 || activeRect.bottom > areaRect.bottom - 72;
             if (instant) scrollToActive();
-            else active.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            else if (outsideComfortZone) active.scrollIntoView({ behavior: 'smooth', block: 'center' });
         }
     }
 
-    const pct = (state.currentIdx / state.sentences.length) * 100;
+    const pct = state.sentences.length > 1 ? (state.currentIdx / (state.sentences.length - 1)) * 100 : 100;
     document.getElementById('prog-fill').style.width = pct + '%';
+    const progressTrack = document.getElementById('prog-track');
+    if (progressTrack) progressTrack.setAttribute('aria-valuenow', String(Math.round(pct)));
     document.getElementById('pos-txt').textContent = `${state.currentIdx + 1} / ${state.sentences.length}`;
-
+    updateChapterSelection();
     saveProgress();
 }
 
@@ -565,7 +652,11 @@ function saveProgress() {
         date: Date.now()
     };
     // O progresso fica somente neste navegador/dispositivo.
-    localStorage.setItem(`${STORAGE_KEY}_${state.title}`, JSON.stringify(data));
+    try {
+        localStorage.setItem(`${STORAGE_KEY}_${state.title}`, JSON.stringify(data));
+    } catch (err) {
+        console.warn('Não foi possível salvar o progresso neste navegador.');
+    }
 }
 
 
@@ -620,10 +711,10 @@ function loadRecents() {
         const pct = Math.max(0, Math.min(100, Math.round((item.currentIdx / item.total) * 100)));
         progress.textContent = `${pct}% concluído`;
 
-        const resumeMessage = () => alert(
-            'Como o arquivo original não fica guardado no navegador por segurança, selecione o arquivo ' +
-            item.title + ' novamente para continuar de onde parou.'
-        );
+        const resumeMessage = () => {
+            requestedResumeTitle = item.title;
+            fileInput.click();
+        };
         recent.addEventListener('click', resumeMessage);
         recent.addEventListener('keydown', event => {
             if (event.key === 'Enter' || event.key === ' ') {
