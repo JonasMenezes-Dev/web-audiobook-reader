@@ -4,6 +4,42 @@ const DEBUG = false;
 
 const STORAGE_KEY = 'audiolivro_v1';
 
+const THEME_STORAGE_KEY = 'audiolivro_theme_v1';
+
+function applyTheme(theme) {
+    const normalizedTheme = theme === 'light' ? 'light' : 'dark';
+    document.body.dataset.theme = normalizedTheme;
+
+    const button = document.getElementById('theme-toggle');
+    if (button) {
+        const isLight = normalizedTheme === 'light';
+        button.innerHTML = isLight
+            ? '<svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M20.2 15.4A8.5 8.5 0 0 1 8.6 3.8 8.5 8.5 0 1 0 20.2 15.4Z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></svg><span>Modo escuro</span>'
+            : '<svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="12" cy="12" r="4" stroke="currentColor" stroke-width="1.7"/><path d="M12 2v2m0 16v2M4.93 4.93l1.42 1.42m11.3 11.3 1.42 1.42M2 12h2m16 0h2M4.93 19.07l1.42-1.42m11.3-11.3 1.42-1.42" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg><span>Modo claro</span>';
+        button.setAttribute('aria-label', isLight ? 'Ativar modo escuro' : 'Ativar modo claro');
+        button.setAttribute('title', isLight ? 'Ativar modo escuro' : 'Ativar modo claro');
+    }
+
+    const themeColor = document.querySelector('meta[name="theme-color"]');
+    if (themeColor) themeColor.setAttribute('content', normalizedTheme === 'light' ? '#f6f4ef' : '#0c0c0f');
+}
+
+function toggleTheme() {
+    const nextTheme = document.body.dataset.theme === 'light' ? 'dark' : 'light';
+    applyTheme(nextTheme);
+    try {
+        localStorage.setItem(THEME_STORAGE_KEY, nextTheme);
+    } catch (_) {
+        // A troca de tema continua funcionando se o armazenamento estiver indisponível.
+    }
+}
+
+try {
+    applyTheme(localStorage.getItem(THEME_STORAGE_KEY) || 'dark');
+} catch (_) {
+    applyTheme('dark');
+}
+
 // Em produção, substitua pela URL pública do backend hospedado.
 // O endereço local continua como padrão para desenvolvimento no PC.
 const API_BASE_URL = window.AUDIOLIVRO_API_URL ||
