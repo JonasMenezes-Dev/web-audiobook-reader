@@ -52,6 +52,20 @@ window.onload = loadRecents;
 
 // Gerenciador de arquivos
 const fileInput = document.getElementById('file-input');
+const dropZone = document.getElementById('drop-zone');
+
+dropZone.addEventListener('dragover', event => {
+    event.preventDefault();
+    dropZone.classList.add('is-dragover');
+});
+dropZone.addEventListener('dragleave', () => dropZone.classList.remove('is-dragover'));
+dropZone.addEventListener('drop', event => {
+    event.preventDefault();
+    dropZone.classList.remove('is-dragover');
+    if (!event.dataTransfer || !event.dataTransfer.files.length) return;
+    fileInput.files = event.dataTransfer.files;
+    fileInput.dispatchEvent(new Event('change', { bubbles: true }));
+});
 
 fileInput.onchange = async e => {
     const file = e.target.files[0];
@@ -71,14 +85,19 @@ fileInput.onchange = async e => {
     }
 };
 
+let loadingPreviousFocus = null;
+
 function showLoading(title, message, progress = null) {
     const overlay = document.getElementById('loading-overlay');
     if (!overlay) return;
+    if (overlay.hidden) loadingPreviousFocus = document.activeElement;
     document.getElementById('loading-title').textContent = title;
     document.getElementById('loading-message').textContent = message;
     setLoadingProgress(progress);
     overlay.hidden = false;
     document.body.setAttribute('aria-busy', 'true');
+    document.querySelectorAll('.screen').forEach(screen => { screen.inert = true; });
+    overlay.focus({ preventScroll: true });
 }
 
 function setLoadingProgress(progress) {
@@ -113,6 +132,12 @@ function hideLoading() {
     const overlay = document.getElementById('loading-overlay');
     if (overlay) overlay.hidden = true;
     document.body.removeAttribute('aria-busy');
+    document.querySelectorAll('.screen').forEach(screen => { screen.inert = false; });
+    const fallback = document.getElementById(document.getElementById('screen-reader').hidden ? 'drop-zone' : 'reading-area');
+    const target = loadingPreviousFocus && loadingPreviousFocus !== document.body &&
+        loadingPreviousFocus.isConnected && !loadingPreviousFocus.closest('[hidden]') ? loadingPreviousFocus : fallback;
+    target.focus({ preventScroll: true });
+    loadingPreviousFocus = null;
 }
 
 function loadPDF(file) {
@@ -379,7 +404,6 @@ function splitIntoSentences(text) {
 
 function processText(text, title, sentences) {
     state.title = title;
-    log('[PDF]', 'Conteúdo recebido:', text);
 
     // O backend (PDF) já envia as frases filtradas. O TXT é dividido aqui.
     // Filtra apenas trechos vazios/curtos demais (ex.: "Ele parou." continua).
@@ -394,7 +418,7 @@ function processText(text, title, sentences) {
         return;
     }
 
-    log('[ESTRUTURA]', state.sentences.length + ' trechos. Itens:', state.sentences.slice(0, 8));
+    log('[ESTRUTURA]', state.sentences.length + ' trechos.');
 
     // Recupera o progresso salvo sem deixar dados locais corrompidos travarem a leitura.
     let prog = null;
@@ -474,14 +498,14 @@ function highlight(scroll = true, instant = false) {
     if (active) {
         active.classList.add('reading');
         if (scroll) {
-            if (instant) scrollToActive();
+            if (instant || window.matchMedia('(prefers-reduced-motion: reduce)').matches) scrollToActive();
             else active.scrollIntoView({ behavior: 'smooth', block: 'center' });
         }
     }
 
     const pct = (state.currentIdx / state.sentences.length) * 100;
     document.getElementById('prog-fill').style.width = pct + '%';
-    document.getElementById('pos-txt').textContent = `${state.currentIdx + 1} / ${state.sentences.length}`;
+    document.getElementById('pos-txt').textContent = `${Math.min(state.currentIdx + 1, state.sentences.length)} / ${state.sentences.length}`;
 
     saveProgress();
 }
@@ -498,7 +522,11 @@ function saveProgress() {
         date: Date.now()
     };
     // O progresso fica somente neste navegador/dispositivo.
-    localStorage.setItem(`${STORAGE_KEY}_${state.title}`, JSON.stringify(data));
+    try {
+        localStorage.setItem(`${STORAGE_KEY}_${state.title}`, JSON.stringify(data));
+    } catch {
+        // Armazenamento bloqueado ou cheio não deve interromper a leitura.
+    }
 }
 
 
@@ -507,25 +535,22 @@ function loadRecents() {
     if (!list) return;
 
     const items = [];
-    for (let i = 0; i < localStorage.length; i++) {
-        const key = localStorage.key(i);
-        if (!key || !key.startsWith(STORAGE_KEY + '_')) continue;
+    try {
+        for (let i = 0; i < localStorage.length; i++) {
+            const key = localStorage.key(i);
+            if (!key || !key.startsWith(STORAGE_KEY + '_')) continue;
 
-        try {
-            const item = JSON.parse(localStorage.getItem(key));
-            if (
-                item &&
-                typeof item.title === 'string' &&
-                Number.isFinite(item.date) &&
-                Number.isInteger(item.currentIdx) &&
-                Number.isInteger(item.total) &&
-                item.total > 0
-            ) {
-                items.push(item);
+            try {
+                const item = JSON.parse(localStorage.getItem(key));
+                if (item && typeof item.title === 'string' && item.title.trim() && Number.isFinite(item.date)) {
+                    items.push(item);
+                }
+            } catch (err) {
+                // Ignora registros locais corrompidos sem impedir a abertura do app.
             }
-        } catch (err) {
-            // Ignora registros locais corrompidos sem impedir a abertura do app.
         }
+    } catch (err) {
+        // A biblioteca continua disponível quando o navegador bloqueia o armazenamento.
     }
 
     // Ordenar por data (mais recentes primeiro)
@@ -533,39 +558,71 @@ function loadRecents() {
     list.replaceChildren();
 
     if (items.length === 0) {
-        const empty = document.createElement('p');
+        const empty = document.createElement('div');
         empty.className = 'no-recents';
-        empty.textContent = 'Nenhum arquivo recente.';
+        const ornament = document.createElement('span');
+        ornament.className = 'empty-ornament';
+        ornament.setAttribute('aria-hidden', 'true');
+        ornament.textContent = '❧';
+        const heading = document.createElement('h3');
+        heading.textContent = 'Sua próxima história está por chegar.';
+        const hint = document.createElement('p');
+        hint.textContent = 'Selecione um PDF ou TXT acima. Quando houver leituras salvas neste navegador, elas aparecerão aqui.';
+        empty.append(ornament, heading, hint);
         list.appendChild(empty);
         return;
     }
 
     items.slice(0, 5).forEach(item => {
-        const recent = document.createElement('div');
+        const recent = document.createElement('button');
+        recent.type = 'button';
         recent.className = 'recent-item';
-        recent.tabIndex = 0;
-        recent.setAttribute('role', 'button');
+        recent.title = item.title;
+        recent.setAttribute('aria-label', `${item.title}. Selecionar novamente o arquivo original para continuar.`);
 
-        const title = document.createElement('div');
+        const cover = document.createElement('span');
+        cover.className = 'book-cover';
+        cover.setAttribute('aria-hidden', 'true');
+        const format = document.createElement('span');
+        format.className = 'book-format';
+        const extension = item.title.split('.').pop().toUpperCase();
+        format.textContent = ['PDF', 'TXT'].includes(extension) ? extension : 'TEXTO';
+        const coverTitle = document.createElement('span');
+        coverTitle.className = 'book-cover-title';
+        coverTitle.textContent = item.title.replace(/\.(pdf|txt)$/i, '');
+        const mark = document.createElement('span');
+        mark.className = 'book-cover-mark';
+        mark.textContent = 'AudioLivro';
+        cover.append(format, coverTitle, mark);
+        const title = document.createElement('span');
+        title.className = 'book-title';
         title.textContent = item.title;
+        recent.append(cover, title);
 
-        const progress = document.createElement('div');
-        const pct = Math.max(0, Math.min(100, Math.round((item.currentIdx / item.total) * 100)));
-        progress.textContent = `${pct}% concluído`;
+        const hasProgress = Number.isInteger(item.currentIdx) && Number.isInteger(item.total) &&
+            item.total > 0 && item.currentIdx >= 0 && item.currentIdx <= item.total;
+        if (hasProgress) {
+            const pct = Math.round((item.currentIdx / item.total) * 100);
+            const progress = document.createElement('progress');
+            progress.className = 'book-progress';
+            progress.max = 100;
+            progress.value = pct;
+            progress.setAttribute('aria-label', `Posição salva em ${item.title}`);
+            const status = document.createElement('span');
+            status.className = 'book-status';
+            status.textContent = `${pct}% da leitura · posição salva`;
+            recent.append(progress, status);
+        }
+        const reopen = document.createElement('span');
+        reopen.className = 'book-reopen';
+        reopen.textContent = 'Selecionar original ↗';
+        recent.append(reopen);
 
         const resumeMessage = () => alert(
             'Como o arquivo original não fica guardado no navegador por segurança, selecione o arquivo ' +
             item.title + ' novamente para continuar de onde parou.'
         );
         recent.addEventListener('click', resumeMessage);
-        recent.addEventListener('keydown', event => {
-            if (event.key === 'Enter' || event.key === ' ') {
-                event.preventDefault();
-                resumeMessage();
-            }
-        });
-
-        recent.append(title, progress);
         list.appendChild(recent);
     });
 }
@@ -601,7 +658,7 @@ function speak() {
     utter.pitch = 1.0;            // Ajuste entre 0.8 e 1.2 para mudar o tom
     utter.lang = 'pt-BR';
 
-    log('[TTS] Trecho ' + String(state.currentIdx).padStart(3, '0'), utter.text);
+    log('[TTS] Trecho ' + String(state.currentIdx).padStart(3, '0'));
 
     utter.onend = () => {
         if (generation !== speechGeneration || !state.playing) return;

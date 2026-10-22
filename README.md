@@ -10,14 +10,24 @@ Aplicação web para transformar arquivos PDF e TXT em audiolivros, com leitura 
 - Narração com Web Speech API e velocidades de 0,7x, 1x, 1,25x, 1,5x e 2x.
 - Progresso e livros recentes salvos no navegador.
 - Indicador visual durante o envio e processamento do arquivo.
+- Biblioteca editorial com capas tipográficas, página de leitura contínua em Lora e player compacto.
+- Temas claro e escuro acompanham a preferência do sistema/navegador; movimento reduzido é respeitado.
+- Painel **Aa** no leitor: tamanho de 16 a 28 px, três espaçamentos e três larguras, com opção de restaurar o padrão.
+
+As preferências de aparência usam a chave `audiolivro_reading_preferences_v1` e afetam somente o texto do livro. O padrão é 20 px no desktop e 18 px no celular. Dados inválidos são descartados; se o armazenamento estiver bloqueado ou cheio, os ajustes e a leitura continuam funcionando na sessão.
+
+Os recentes guardam **metadados e progresso, não o conteúdo dos arquivos**. Para retomar, selecione novamente o arquivo original no mesmo navegador. A gravação do progresso depende da disponibilidade do armazenamento local. Como a identificação atual usa o nome do arquivo, arquivos diferentes com o mesmo nome podem compartilhar a posição salva.
+
+A voz é escolhida automaticamente entre as disponíveis no navegador. Esta versão não possui seletor manual de voz nem navegação por capítulos; a navegação disponível é por frases.
 
 ## Arquitetura
 
 - **Frontend:** HTML, CSS e JavaScript; publicado no GitHub Pages.
+- **Aparência:** `reading-preferences.js` controla apenas as preferências de leitura, separado do motor em `script.js`.
 - **Backend:** FastAPI/Python, em `Backend/`.
 - **PDF:** PyMuPDF é usado no backend para extração e reconstrução do conteúdo.
 - **TXT e voz:** FileReader e Web Speech API do navegador.
-- **Configuração:** `config.js` define a URL do backend. Em desenvolvimento local, o endereço padrão é `http://127.0.0.1:8000`; em produção, configure a URL pública.
+- **Configuração:** `config.js` define a URL do backend e seu valor prevalece também no desenvolvimento local. Para usar a API local, aponte-o para `http://127.0.0.1:8000`; para publicação, mantenha a URL pública do serviço. O endereço local só é usado como padrão se não houver URL configurada.
 
 O processamento de PDF depende do backend. Se ele estiver indisponível, a aplicação informa a falha e **não tenta ler o PDF por um caminho alternativo que possa ignorar o filtro de conteúdo**.
 
@@ -50,6 +60,8 @@ O processamento de PDF depende do backend. Se ele estiver indisponível, a aplic
 
 6. Abra o frontend por um servidor HTTP local (por exemplo, a extensão Live Server do VS Code). O backend local fica em `http://127.0.0.1:8000`.
 
+Confira a URL de `config.js`: o arquivo atualmente aponta para o serviço público, portanto iniciar a API local não muda automaticamente o destino dos uploads.
+
 Para usar a versão publicada, abra o GitHub Pages do projeto e confira se `config.js` aponta para a URL pública atual do backend.
 
 ## Testes
@@ -61,6 +73,16 @@ python -m pytest tests/test_pipeline.py -v
 ```
 
 O conjunto verifica a extração estrutural, a ordem de leitura, a divisão em frases, os estilos, a velocidade 1,25x e a proteção contra fallback que contorne o filtro quando o backend falhar.
+
+Os testes de navegador usam Node.js e Playwright como ferramentas de desenvolvimento, sem dependências adicionais no frontend. Com o módulo `playwright` disponível para o Node e seu Chromium instalado:
+
+```bash
+node --test --test-concurrency=1 --test-timeout=30000 tests/library.cjs tests/reader.cjs
+```
+
+Para uma instalação externa do Playwright, configure `NODE_PATH` com a pasta `node_modules`. `CHROMIUM_PATH` permite indicar um executável existente. Os testes verificam biblioteca, player, preferências, teclado, armazenamento indisponível, movimento reduzido e larguras de 320 a 1440 px. A narração é simulada para verificar controles e sincronização; isso não valida a qualidade do áudio real.
+
+O teste de PDF real no navegador é opcional. Com a API local em execução, defina `AUDIOLIVRO_TEST_API_URL=http://127.0.0.1:8000` no terminal antes do comando acima. Sem essa variável, somente esse caso é ignorado; o teste de backend indisponível continua sendo executado. Os testes usam arquivos sintéticos locais, sem enviar livros pessoais ao serviço público.
 
 Para gerar o PDF sintético de regressão:
 
@@ -85,4 +107,4 @@ python tests/e2e_upload.py
 
 - Se PDF não processar, confirme que o backend está ativo e que a URL configurada em `config.js` está correta.
 - Se o navegador não falar, confira as vozes e permissões de áudio do navegador.
-- Para depuração detalhada, altere `const DEBUG = true` em `script.js`; desative os logs antes de publicar.
+- Para depuração, altere `const DEBUG = true` em `script.js`; os logs informam contagens e índices, sem o conteúdo do livro. Desative-os antes de publicar.

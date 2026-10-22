@@ -7,7 +7,7 @@
     <title>AudioLivro Pro</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link
-        href="https://fonts.googleapis.com/css2?family=Lora:ital,wght@0,400;0,600;1,400&family=DM+Sans:wght@300;400;500&family=JetBrains+Mono:wght@400;500&display=swap"
+        href="https://fonts.googleapis.com/css2?family=Lora:ital,wght@0,400;0,600;1,400&family=DM+Sans:wght@300;400;500&display=swap"
         rel="stylesheet">
    <link rel="stylesheet" href="style.css">
 </head>
@@ -15,7 +15,7 @@
 <body>
 
 
-    <div id="loading-overlay" class="loading-overlay" hidden role="status" aria-live="polite" aria-busy="true">
+    <div id="loading-overlay" class="loading-overlay" hidden role="status" aria-live="polite" aria-busy="true" tabindex="-1" aria-labelledby="loading-title" aria-describedby="loading-message">
         <div class="loading-card">
             <div class="loading-spinner" aria-hidden="true"></div>
             <h2 id="loading-title">Preparando seu audiolivro</h2>
@@ -26,56 +26,119 @@
         </div>
     </div>
 
-    <div id="screen-import" class="screen">
+    <main id="screen-import" class="screen" aria-labelledby="library-title">
         <div class="import-wrap">
-<h1>AudioLivro Pro</h1>
-<p>Transforme PDFs e textos em audiolivros imersivos.
-            </p>
+            <header class="library-header">
+                <a class="library-brand" href="./" aria-label="AudioLivro Pro — início">
+                    <svg viewBox="0 0 40 40" fill="none" aria-hidden="true"><path d="M20 11C15 7 9 7 5 8v23c5-1 10 0 15 3 5-3 10-4 15-3V8c-4-1-10-1-15 3Zm0 0v23M10 14c2 0 4 .5 6 1.5M10 20c2 0 4 .5 6 1.5M24 15.5c2-1 4-1.5 6-1.5M24 21.5c2-1 4-1.5 6-1.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                    <span>AudioLivro <small>Pro</small></span>
+                </a>
+                <span class="library-header-note">Seu tempo, suas histórias.</span>
+            </header>
 
-            <div id="drop-zone" class="drop-zone" onclick="document.getElementById('file-input').click()">
-<span>📄</span>
-<p>Toque ou arraste seu arquivo aqui</p>
+            <section class="library-intro">
+                <p class="eyebrow">Um lugar para suas leituras</p>
+                <h1 id="library-title">Boas histórias merecem<br>o seu tempo.</h1>
+                <p class="library-description">Abra um livro, encontre seu ritmo.<br>Leia e ouça seus PDFs e textos, uma frase de cada vez.</p>
+            </section>
+
+            <section class="library-import" aria-labelledby="import-title">
+                <div class="import-copy">
+                    <p class="eyebrow">A próxima leitura começa aqui</p>
+                    <h2 id="import-title">Abra espaço para um novo livro.</h2>
+                    <p>Escolha um arquivo do seu dispositivo e deixe a narração acompanhar a leitura.</p>
+                </div>
+                <button type="button" id="drop-zone" class="drop-zone" onclick="document.getElementById('file-input').click()" aria-describedby="import-formats">
+                    <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 16V4m-4 4 4-4 4 4M5 15v5h14v-5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                    <span class="import-action">Selecionar arquivo <span aria-hidden="true">↗</span></span>
+                    <span id="import-formats">PDF ou TXT · ou arraste o arquivo aqui</span>
+                </button>
                 <input type="file" id="file-input" accept=".pdf,.txt" hidden>
-            </div>
+            </section>
 
-            <div id="saved-section">
-                <p>
-                    Arquivos Recentes</p>
+            <section id="saved-section" aria-labelledby="recents-title">
+                <div class="shelf-heading">
+                    <h2 id="recents-title">Sua estante</h2>
+                    <span>Leituras recentes</span>
+                </div>
+                <p class="shelf-note">Seu progresso fica neste navegador. Para continuar uma leitura, selecione novamente o arquivo original.</p>
                 <div id="book-list"></div>
-            </div>
+            </section>
+            <footer class="library-footer">Entre páginas e palavras, um momento para você.</footer>
         </div>
-    </div>
+    </main>
 
     <div id="screen-reader" class="screen" hidden>
-<header>
-            <button onclick="location.reload()">✕
-                SAIR</button>
-<div id="r-title">—</div>
+        <header class="reader-header">
+            <button type="button" onclick="location.reload()" aria-label="Sair da leitura e voltar à biblioteca"><span aria-hidden="true">←</span> Biblioteca</button>
+            <div id="r-title">—</div>
+            <button type="button" id="btn-appearance" aria-label="Aparência da leitura" aria-expanded="false" aria-controls="reading-appearance" title="Ajustar aparência">Aa</button>
         </header>
 
-        <div id="reading-area" class="reading-area">
-            <div id="reading-inner" class="reading-inner"></div>
+        <section id="reading-appearance" class="reading-appearance" aria-labelledby="appearance-title" hidden>
+            <div class="appearance-heading">
+                <h2 id="appearance-title">Sua leitura, seu ritmo.</h2>
+                <button type="button" id="appearance-close" aria-label="Fechar ajustes de aparência">×</button>
+            </div>
+            <p class="appearance-description">Ajuste a página para ler com conforto.</p>
+            <div class="appearance-font-heading">
+                <label for="reading-font-size">Tamanho do texto</label>
+                <output id="reading-font-value" for="reading-font-size" aria-live="off">20 px</output>
+            </div>
+            <input type="range" id="reading-font-size" min="16" max="28" step="1" value="20">
+            <fieldset class="appearance-options">
+                <legend>Espaçamento entre linhas</legend>
+                <div>
+                    <label><input type="radio" name="reading-line-spacing" value="compact"><span>Compacto</span></label>
+                    <label><input type="radio" name="reading-line-spacing" value="comfortable" checked><span>Confortável</span></label>
+                    <label><input type="radio" name="reading-line-spacing" value="wide"><span>Amplo</span></label>
+                </div>
+            </fieldset>
+            <fieldset class="appearance-options">
+                <legend>Largura da página</legend>
+                <div>
+                    <label><input type="radio" name="reading-width" value="narrow"><span>Estreita</span></label>
+                    <label><input type="radio" name="reading-width" value="standard" checked><span>Padrão</span></label>
+                    <label><input type="radio" name="reading-width" value="wide"><span>Ampla</span></label>
+                </div>
+            </fieldset>
+            <button type="button" id="appearance-reset">Restaurar padrão</button>
+            <p id="appearance-storage-status" role="status">As preferências ficam neste navegador.</p>
+        </section>
+
+        <div id="reading-area" class="reading-area" tabindex="0" role="region" aria-labelledby="r-title">
+            <article id="reading-inner" class="reading-inner" aria-label="Texto do livro"></article>
         </div>
 
-        <footer class="player">
-            <div class="prog-track" id="prog-track" onclick="handleProgClick(event)">
-<div class="prog-fill" id="prog-fill"></div>
+        <footer class="player" aria-label="Controles da narração">
+            <div class="prog-track" id="prog-track" onclick="handleProgClick(event)" title="Clique para ir a um ponto da leitura" aria-hidden="true">
+                <div class="prog-fill" id="prog-fill"></div>
             </div>
             <div class="player-row">
-<span id="pos-txt">0
-                    / 0</span>
-<div>
-                    <button class="cbtn" onclick="prev()">⏮</button>
-                    <button class="pbtn" id="btn-play" onclick="togglePlay()">
-<span id="play-icon">▶</span>
-                    </button>
-                    <button class="cbtn" onclick="next()">⏭</button>
+                <div class="player-position" role="group" aria-label="Posição da leitura">
+                    <span class="player-caption">Frase</span>
+                    <span id="pos-txt">0 / 0</span>
                 </div>
-                <button onclick="cycleSpeed()" id="btn-spd">1.00x</button>
+                <div class="player-transport" role="group" aria-label="Reprodução e navegação por frases">
+                    <button type="button" class="cbtn" onclick="prev()" aria-label="Frase anterior" title="Frase anterior">
+                        <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M6 5v14m12-1-9-6 9-6v12Z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"/></svg>
+                    </button>
+                    <button type="button" class="pbtn" id="btn-play" onclick="togglePlay()" aria-label="Reproduzir ou pausar a narração" title="Reproduzir ou pausar">
+                        <span id="play-icon" aria-hidden="true">▶</span>
+                    </button>
+                    <button type="button" class="cbtn" onclick="next()" aria-label="Próxima frase" title="Próxima frase">
+                        <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M18 5v14M6 18l9-6-9-6v12Z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"/></svg>
+                    </button>
+                </div>
+                <div class="player-speed">
+                    <span class="player-caption" id="speed-label">Velocidade</span>
+                    <button type="button" onclick="cycleSpeed()" id="btn-spd" aria-describedby="speed-label" title="Alternar velocidade da narração">1.00x</button>
+                </div>
             </div>
         </footer>
     </div>
     <script src="config.js"></script>
     <script src="script.js"></script>
+    <script src="reading-preferences.js"></script>
 </body>
 </html>
