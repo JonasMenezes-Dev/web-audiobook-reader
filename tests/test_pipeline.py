@@ -765,4 +765,6 @@ def test_tema_claro_tem_alternancia_persistente_e_estilos_de_leitura():
     assert "const THEME_STORAGE_KEY = 'audiolivro_theme_v1';" in script
     assert "localStorage.setItem(THEME_STORAGE_KEY, nextTheme)" in script
     assert "function toggleTheme()" in script
-    assert "applyTheme(localStorage.getItem(THEME_STORAGE_KEY) || 'dark')" in script
+    # An explicit choice persists; without one the editorial theme follows the system.
+    assert "const savedTheme = localStorage.getItem(THEME_STORAGE_KEY)" in script
+    assert "systemTheme.addEventListener('change'" in script
