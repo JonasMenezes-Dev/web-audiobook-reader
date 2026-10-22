@@ -48,6 +48,16 @@ async function waitForActiveVisible(page) {
         const area = document.getElementById('reading-area').getBoundingClientRect();
         const player = document.querySelector('.player').getBoundingClientRect();
         return active.top >= area.top && active.bottom <= Math.min(area.bottom, player.top);
+    }, null, { timeout: 5000 }).catch(async error => {
+        const bounds = await page.evaluate(() => {
+            const rect = selector => {
+                const r = document.querySelector(selector).getBoundingClientRect();
+                return { top: r.top, bottom: r.bottom, height: r.height };
+            };
+            return { active: rect('.sent.reading'), area: rect('#reading-area'), player: rect('.player'),
+                viewport: innerWidth, scroll: document.getElementById('reading-area').scrollTop };
+        });
+        throw new Error(`${error.message}; bounds=${JSON.stringify(bounds)}`);
     });
 }
 
@@ -154,7 +164,7 @@ test('editorial player keeps playback, seeking, speeds and keyboard controls', a
     await page.keyboard.press('Enter');
     assert.equal(await page.locator('.sent.reading').getAttribute('id'), 's-26');
     const fill = await page.locator('#prog-fill').evaluate(el => parseFloat(el.style.width));
-    assert.equal(fill, 26);
+    assert.ok(Math.abs(fill - (26 / 99) * 100) < 0.001);
     await page.close();
 });
 
@@ -175,10 +185,13 @@ test('player touch targets, focus, themes and reduced motion fit the reserved sp
             assert.ok(metrics.left >= 0 && metrics.right <= width);
             assert.ok(metrics.top >= metrics.areaBottom && metrics.bottom <= 812);
             assert.equal(metrics.overflow, false);
-            for (const button of await page.locator('.player button').all()) {
+            for (const button of await page.locator('.player button, #voice-select, #chapter-select, #btn-appearance, #theme-toggle').all()) {
                 const rect = await button.boundingBox();
                 assert.ok(rect.width >= 44 && rect.height >= 44, 'each button has a 44px touch target');
             }
+            const appearance = await page.locator('#btn-appearance').boundingBox();
+            const theme = await page.locator('#theme-toggle').boundingBox();
+            assert.ok(appearance.x + appearance.width <= theme.x, 'header controls do not overlap');
             if (width === 1440) backgrounds.push(metrics.background);
         }
     }
@@ -353,9 +366,10 @@ test('reduced motion disables automatic smooth scrolling and loading animation',
     await page.emulateMedia({ reducedMotion: 'reduce' });
     const behavior = await page.evaluate(() => {
         let behavior;
-        const original = Element.prototype.scrollIntoView;
-        Element.prototype.scrollIntoView = function(options) { behavior = options?.behavior; };
-        try { state.currentIdx = 50; highlight(); } finally { Element.prototype.scrollIntoView = original; }
+        const area = document.getElementById('reading-area');
+        const original = area.scrollTo;
+        area.scrollTo = options => { behavior = options?.behavior; };
+        try { state.currentIdx = 50; highlight(); } finally { area.scrollTo = original; }
         return behavior;
     });
     assert.notEqual(behavior, 'smooth');
@@ -385,5 +399,57 @@ test('completed narration never displays a sentence count beyond the total', asy
     assert.equal(await page.locator('#pos-txt').textContent(), '100 / 100');
     assert.equal(await page.locator('#prog-fill').evaluate(el => el.style.width), '100%');
     assert.equal((await page.locator('#play-icon').textContent()).trim(), '▶');
+    await page.close();
+});
+
+test('merged voice, chapters and manual theme remain compatible with editorial appearance', async () => {
+    const page = await browser.newPage({ colorScheme: 'light' });
+    await page.route('https://fonts.googleapis.com/**', route => route.abort());
+    await page.route('https://fonts.gstatic.com/**', route => route.abort());
+    await page.addInitScript(() => {
+        // Native voices are platform-dependent; use deterministic descriptors and utterances.
+        window.SpeechSynthesisUtterance = class { constructor(text) { this.text = text; } };
+        speechSynthesis.getVoices = () => [
+            { name: 'English', lang: 'en-US' },
+            { name: 'Ana', lang: 'pt-BR' },
+            { name: 'Google Português', lang: 'pt-BR' },
+        ];
+        speechSynthesis.speak = utterance => { window.testUtterance = utterance; };
+        speechSynthesis.cancel = () => {};
+    });
+    await page.goto(url);
+    assert.equal(await page.locator('body').getAttribute('data-theme'), 'light');
+    await page.locator('#file-input').setInputFiles({ name: 'Capítulos demonstrativos.txt', mimeType: 'text/plain', buffer: Buffer.from('CAPÍTULO 1\n\nPrimeira frase demonstrativa.\n\nCAPÍTULO 2\n\nSegunda frase demonstrativa.') });
+    await page.locator('#reading-area').waitFor({ state: 'visible' });
+    assert.equal(await page.locator('#chapter-select option').count(), 2);
+    assert.equal(await page.locator('#voice-select').inputValue(), 'Google Português::pt-BR');
+    await page.locator('#btn-play').click();
+    await page.evaluate(() => { window.previousUtterance = window.testUtterance; });
+    await page.locator('#voice-select').selectOption('Ana::pt-BR');
+    assert.equal(await page.evaluate(() => window.testUtterance.voice.name), 'Ana');
+    assert.equal(await page.evaluate(() => window.testUtterance.lang), 'pt-BR');
+    await page.evaluate(() => window.previousUtterance.onend());
+    assert.equal(await page.locator('.sent.reading').getAttribute('id'), 's-0');
+    await page.locator('#chapter-select').selectOption('2');
+    assert.equal(await page.locator('.sent.reading').getAttribute('id'), 's-2');
+    assert.equal((await page.locator('#play-icon').textContent()).trim(), '⏸');
+    await waitForActiveVisible(page);
+    await page.locator('#btn-appearance').click();
+    await page.getByLabel('Tamanho do texto', { exact: true }).focus();
+    await page.keyboard.press('End');
+    await page.keyboard.press('Escape');
+    await waitForActiveVisible(page);
+    assert.equal(await page.locator('#reading-inner').evaluate(el => getComputedStyle(el).fontSize), '28px');
+    assert.equal(await page.locator('#chapter-select').inputValue(), '2');
+    const lightPaper = await page.locator('#reading-inner').evaluate(el => getComputedStyle(el).backgroundColor);
+    await page.locator('#theme-toggle').click();
+    assert.notEqual(await page.locator('#reading-inner').evaluate(el => getComputedStyle(el).backgroundColor), lightPaper);
+    assert.equal(await page.evaluate(() => localStorage.getItem('audiolivro_theme_v1')), 'dark');
+    await page.emulateMedia({ colorScheme: 'light' });
+    assert.equal(await page.locator('body').getAttribute('data-theme'), 'dark');
+    await page.reload();
+    assert.equal(await page.locator('body').getAttribute('data-theme'), 'dark');
+    assert.equal(await page.locator('#voice-select').inputValue(), 'Ana::pt-BR');
+    assert.equal(await page.locator('#reading-inner').evaluate(el => getComputedStyle(el).fontSize), '28px');
     await page.close();
 });

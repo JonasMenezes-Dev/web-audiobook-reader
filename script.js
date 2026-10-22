@@ -4,6 +4,50 @@ const DEBUG = false;
 
 const STORAGE_KEY = 'audiolivro_v1';
 
+const THEME_STORAGE_KEY = 'audiolivro_theme_v1';
+const systemTheme = window.matchMedia('(prefers-color-scheme: dark)');
+let hasSavedTheme = false;
+
+function applyTheme(theme) {
+    const normalizedTheme = theme === 'light' ? 'light' : 'dark';
+    document.body.dataset.theme = normalizedTheme;
+
+    const button = document.getElementById('theme-toggle');
+    if (button) {
+        const isLight = normalizedTheme === 'light';
+        button.innerHTML = isLight
+            ? '<svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M20.2 15.4A8.5 8.5 0 0 1 8.6 3.8 8.5 8.5 0 1 0 20.2 15.4Z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></svg><span>Modo escuro</span>'
+            : '<svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="12" cy="12" r="4" stroke="currentColor" stroke-width="1.7"/><path d="M12 2v2m0 16v2M4.93 4.93l1.42 1.42m11.3 11.3 1.42 1.42M2 12h2m16 0h2M4.93 19.07l1.42-1.42m11.3-11.3 1.42-1.42" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg><span>Modo claro</span>';
+        button.setAttribute('aria-label', isLight ? 'Ativar modo escuro' : 'Ativar modo claro');
+        button.setAttribute('title', isLight ? 'Ativar modo escuro' : 'Ativar modo claro');
+    }
+
+    const themeColor = document.querySelector('meta[name="theme-color"]');
+    if (themeColor) themeColor.setAttribute('content', normalizedTheme === 'light' ? '#f6f2e9' : '#24211e');
+}
+
+function toggleTheme() {
+    const nextTheme = document.body.dataset.theme === 'light' ? 'dark' : 'light';
+    hasSavedTheme = true;
+    applyTheme(nextTheme);
+    try {
+        localStorage.setItem(THEME_STORAGE_KEY, nextTheme);
+    } catch (_) {
+        // A troca de tema continua funcionando se o armazenamento estiver indisponível.
+    }
+}
+
+try {
+    const savedTheme = localStorage.getItem(THEME_STORAGE_KEY);
+    hasSavedTheme = savedTheme === 'light' || savedTheme === 'dark';
+    applyTheme(hasSavedTheme ? savedTheme : systemTheme.matches ? 'dark' : 'light');
+} catch (_) {
+    applyTheme(systemTheme.matches ? 'dark' : 'light');
+}
+systemTheme.addEventListener('change', () => {
+    if (!hasSavedTheme) applyTheme(systemTheme.matches ? 'dark' : 'light');
+});
+
 // Em produção, substitua pela URL pública do backend hospedado.
 // O endereço local continua como padrão para desenvolvimento no PC.
 const API_BASE_URL = window.AUDIOLIVRO_API_URL ||
@@ -24,31 +68,108 @@ let state = {
     sentences: [],
     currentIdx: 0,
     rate: 1.0,
-    playing: false
+    playing: false,
+    chapters: []
 };
 
 function log(...args) {
     if (DEBUG) console.log(...args);
 }
 
-// Garante que as vozes sejam carregadas pelo navegador
+// As vozes disponíveis variam conforme o navegador e o dispositivo.
+const VOICE_STORAGE_KEY = 'audiolivro_voice_v1';
 let voices = [];
+
+function voiceKey(voice) {
+    return `${voice.name}::${voice.lang}`;
+}
+
+function isBrazilianPortuguese(voice) {
+    return (voice.lang || '').toLowerCase() === 'pt-br';
+}
+
+function getPreferredVoice() {
+    return voices.find(v => isBrazilianPortuguese(v) && /google/i.test(v.name)) ||
+        voices.find(isBrazilianPortuguese) ||
+        voices.find(v => (v.lang || '').toLowerCase().startsWith('pt-')) ||
+        voices[0];
+}
+
 function loadVoices() {
     voices = window.speechSynthesis.getVoices();
+    const select = document.getElementById('voice-select');
+    if (!select || voices.length === 0) return;
+
+    let savedVoiceKey = '';
+    try {
+        savedVoiceKey = localStorage.getItem(VOICE_STORAGE_KEY) || '';
+    } catch (_) {
+        // A seleção continua funcionando mesmo se o armazenamento estiver indisponível.
+    }
+
+    const previousKey = select.value;
+    const sortedVoices = [...voices].sort((a, b) => {
+        const aPortuguese = (a.lang || '').toLowerCase().startsWith('pt-');
+        const bPortuguese = (b.lang || '').toLowerCase().startsWith('pt-');
+        if (aPortuguese !== bPortuguese) return aPortuguese ? -1 : 1;
+        if (isBrazilianPortuguese(a) !== isBrazilianPortuguese(b)) {
+            return isBrazilianPortuguese(a) ? -1 : 1;
+        }
+        return a.name.localeCompare(b.name);
+    });
+
+    select.replaceChildren();
+    sortedVoices.forEach(voice => {
+        const option = document.createElement('option');
+        option.value = voiceKey(voice);
+        option.textContent = `${voice.name} — ${voice.lang || 'idioma desconhecido'}`;
+        select.appendChild(option);
+    });
+
+    const preferred = getPreferredVoice();
+    const availableKeys = new Set(voices.map(voiceKey));
+    select.value = availableKeys.has(savedVoiceKey) ? savedVoiceKey :
+        availableKeys.has(previousKey) ? previousKey :
+        preferred ? voiceKey(preferred) : voiceKey(voices[0]);
 }
 
 window.speechSynthesis.onvoiceschanged = loadVoices;
 loadVoices();
 
 function getBestVoice() {
-    // Tenta encontrar a voz do Google em português, que é a mais humana
-    return voices.find(v => v.name.includes('Google') && v.lang.includes('pt-BR')) ||
-        voices.find(v => v.lang.includes('pt-BR')) ||
-        voices[0];
+    const select = document.getElementById('voice-select');
+    const selectedKey = select ? select.value : '';
+    return voices.find(voice => voiceKey(voice) === selectedKey) || getPreferredVoice();
+}
+
+const voiceSelect = document.getElementById('voice-select');
+if (voiceSelect) {
+    voiceSelect.addEventListener('change', () => {
+        try {
+            localStorage.setItem(VOICE_STORAGE_KEY, voiceSelect.value);
+        } catch (_) {
+            // Não impede a leitura se o armazenamento estiver indisponível.
+        }
+
+        // Se estiver lendo, aplica a nova voz imediatamente na frase atual.
+        if (state.playing) {
+            cancelSpeech();
+            speak();
+        }
+    });
 }
 
 // Carregar lista inicial
 window.onload = loadRecents;
+
+// Ao retomar um livro recente, o navegador pede o arquivo original; o conteúdo não é armazenado.
+let requestedResumeTitle = '';
+
+// Salva novamente quando a página vai para segundo plano ou é fechada.
+window.addEventListener('pagehide', saveProgress);
+document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') saveProgress();
+});
 
 // Gerenciador de arquivos
 const fileInput = document.getElementById('file-input');
@@ -66,12 +187,21 @@ dropZone.addEventListener('drop', event => {
     fileInput.files = event.dataTransfer.files;
     fileInput.dispatchEvent(new Event('change', { bubbles: true }));
 });
+fileInput.addEventListener('cancel', () => { requestedResumeTitle = ''; });
 
 fileInput.onchange = async e => {
     const file = e.target.files[0];
     if (!file) return;
 
     try {
+        if (requestedResumeTitle) {
+            const expectedTitle = requestedResumeTitle;
+            requestedResumeTitle = '';
+            if (file.name !== expectedTitle) {
+                alert(`Para retomar “${expectedTitle}”, selecione esse mesmo arquivo.`);
+                return;
+            }
+        }
         if (file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf')) {
             await loadPDF(file);
         } else if (file.type === 'text/plain' || file.name.toLowerCase().endsWith('.txt')) {
@@ -96,7 +226,7 @@ function showLoading(title, message, progress = null) {
     setLoadingProgress(progress);
     overlay.hidden = false;
     document.body.setAttribute('aria-busy', 'true');
-    document.querySelectorAll('.screen').forEach(screen => { screen.inert = true; });
+    document.querySelectorAll('.screen, #theme-toggle').forEach(screen => { screen.inert = true; });
     overlay.focus({ preventScroll: true });
 }
 
@@ -132,7 +262,7 @@ function hideLoading() {
     const overlay = document.getElementById('loading-overlay');
     if (overlay) overlay.hidden = true;
     document.body.removeAttribute('aria-busy');
-    document.querySelectorAll('.screen').forEach(screen => { screen.inert = false; });
+    document.querySelectorAll('.screen, #theme-toggle').forEach(screen => { screen.inert = false; });
     const fallback = document.getElementById(document.getElementById('screen-reader').hidden ? 'drop-zone' : 'reading-area');
     const target = loadingPreviousFocus && loadingPreviousFocus !== document.body &&
         loadingPreviousFocus.isConnected && !loadingPreviousFocus.closest('[hidden]') ? loadingPreviousFocus : fallback;
@@ -434,15 +564,76 @@ function processText(text, title, sentences) {
     state.rate = prog && SPEEDS.includes(prog.rate) ? prog.rate : 1.0;
 
     document.getElementById('r-title').textContent = title;
-    document.getElementById('btn-spd').textContent = state.rate.toFixed(2) + 'x';
+    document.querySelector('#btn-spd span').textContent = state.rate.toFixed(2) + 'x';
 
     renderText();
+    renderChapterOptions();
     document.getElementById('screen-import').hidden = true;
     document.getElementById('screen-reader').hidden = false;
 
     highlight();
 }
 
+
+// Identifica títulos comuns sem depender do formato original do PDF.
+function detectChapters(sentences) {
+    const chapters = [];
+    sentences.forEach((raw, index) => {
+        const title = String(raw || '').trim();
+        if (!title || title.length > 100) return;
+        const namedHeading = /^(?:cap[ií]tulo|chapter|parte|se[cç][aã]o|unidade|m[oó]dulo|ap[eê]ndice|introdu[cç][aã]o|conclus[aã]o|refer[eê]ncias|bibliografia)\b/i.test(title);
+        const numberedHeading = /^\d+(?:\.\d+){0,4}\.?\s+\S/.test(title);
+        const letters = title.match(/[A-Za-zÀ-ÿ]/g) || [];
+        const uppercaseHeading = title.length <= 65 && letters.length >= 4 &&
+            title === title.toLocaleUpperCase('pt-BR') && !/[.!?]$/.test(title);
+        if (namedHeading || numberedHeading || uppercaseHeading) {
+            chapters.push({ index, title });
+        }
+    });
+    return chapters;
+}
+
+function renderChapterOptions() {
+    const select = document.getElementById('chapter-select');
+    if (!select) return;
+    state.chapters = detectChapters(state.sentences);
+    select.replaceChildren();
+    if (state.chapters.length === 0) {
+        const option = document.createElement('option');
+        option.value = '';
+        option.textContent = 'Nenhuma seção detectada';
+        select.appendChild(option);
+        select.disabled = true;
+        return;
+    }
+    select.disabled = false;
+    state.chapters.forEach((chapter, position) => {
+        const option = document.createElement('option');
+        option.value = String(chapter.index);
+        const label = chapter.title.length > 54 ? chapter.title.slice(0, 51) + '…' : chapter.title;
+        option.textContent = `${position + 1}. ${label}`;
+        select.appendChild(option);
+    });
+    updateChapterSelection();
+}
+
+function updateChapterSelection() {
+    const select = document.getElementById('chapter-select');
+    if (!select || !state.chapters.length) return;
+    let active = state.chapters[0];
+    for (const chapter of state.chapters) {
+        if (chapter.index > state.currentIdx) break;
+        active = chapter;
+    }
+    select.value = String(active.index);
+}
+
+function goToChapter(value) {
+    const index = Number(value);
+    if (Number.isInteger(index) && state.chapters.some(chapter => chapter.index === index)) {
+        jumpTo(index, true);
+    }
+}
 
 function renderText() {
     const container = document.getElementById('reading-inner');
@@ -477,16 +668,24 @@ function goTo(i) {
 }
 
 
-function scrollToActive() {
+function scrollToActive(behavior = 'smooth') {
     const active = document.getElementById(`s-${state.currentIdx}`);
-    if (!active) return;
-    // Desliga o 'scroll-behavior: smooth' do container só durante o salto:
-    // rolagens suaves concorrentes (clique vs. avanço do áudio) se cancelavam,
-    // fazendo o clique não levar ao trecho escolhido.
     const area = document.getElementById('reading-area');
+    if (!active || !area) return;
+
+    // Rola apenas a área do texto e mantém a frase atual no centro da tela.
+    const areaRect = area.getBoundingClientRect();
+    const activeRect = active.getBoundingClientRect();
+    const targetTop = area.scrollTop
+        + activeRect.top - areaRect.top
+        - (area.clientHeight / 2)
+        + (activeRect.height / 2);
+
+    // 'auto' follows the CSS scroll-behavior; temporarily override it so clicks,
+    // chapter jumps and appearance adjustments remain immediate.
     const previous = area.style.scrollBehavior;
-    area.style.scrollBehavior = 'auto';
-    active.scrollIntoView({ block: 'center' });
+    if (behavior === 'auto') area.style.scrollBehavior = 'auto';
+    area.scrollTo({ top: Math.max(0, targetTop), behavior });
     area.style.scrollBehavior = previous;
 }
 
@@ -498,15 +697,17 @@ function highlight(scroll = true, instant = false) {
     if (active) {
         active.classList.add('reading');
         if (scroll) {
-            if (instant || window.matchMedia('(prefers-reduced-motion: reduce)').matches) scrollToActive();
-            else active.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            instant = instant || window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+            scrollToActive(instant ? 'auto' : 'smooth');
         }
     }
 
-    const pct = (state.currentIdx / state.sentences.length) * 100;
+    const pct = state.sentences.length > 1 ? Math.min(100, (state.currentIdx / (state.sentences.length - 1)) * 100) : 100;
     document.getElementById('prog-fill').style.width = pct + '%';
+    const progressTrack = document.getElementById('prog-track');
+    if (progressTrack) progressTrack.setAttribute('aria-valuenow', String(Math.round(pct)));
     document.getElementById('pos-txt').textContent = `${Math.min(state.currentIdx + 1, state.sentences.length)} / ${state.sentences.length}`;
-
+    updateChapterSelection();
     saveProgress();
 }
 
@@ -618,10 +819,10 @@ function loadRecents() {
         reopen.textContent = 'Selecionar original ↗';
         recent.append(reopen);
 
-        const resumeMessage = () => alert(
-            'Como o arquivo original não fica guardado no navegador por segurança, selecione o arquivo ' +
-            item.title + ' novamente para continuar de onde parou.'
-        );
+        const resumeMessage = () => {
+            requestedResumeTitle = item.title;
+            fileInput.click();
+        };
         recent.addEventListener('click', resumeMessage);
         list.appendChild(recent);
     });
@@ -656,7 +857,7 @@ function speak() {
     utter.voice = getBestVoice(); // Escolhe a voz mais humana disponível
     utter.rate = state.rate;      // Respeita exatamente a velocidade escolhida
     utter.pitch = 1.0;            // Ajuste entre 0.8 e 1.2 para mudar o tom
-    utter.lang = 'pt-BR';
+    utter.lang = utter.voice?.lang || 'pt-BR';
 
     log('[TTS] Trecho ' + String(state.currentIdx).padStart(3, '0'));
 
@@ -698,7 +899,7 @@ function cycleSpeed() {
     let currentPos = SPEEDS.indexOf(state.rate);
     if (currentPos === -1) currentPos = 0;
     state.rate = SPEEDS[(currentPos + 1) % SPEEDS.length];
-    document.getElementById('btn-spd').textContent = state.rate.toFixed(2) + 'x';
+    document.querySelector('#btn-spd span').textContent = state.rate.toFixed(2) + 'x';
     log('[TTS] Velocidade:', state.rate);
     if (state.playing) {
         cancelSpeech();

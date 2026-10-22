@@ -54,7 +54,7 @@
             cancelAnimationFrame(alignFrame);
             alignFrame = requestAnimationFrame(() => {
                 // Reuse the existing immediate scroll without changing playback or progress.
-                if (!reader.hidden) scrollToActive();
+                if (!reader.hidden) scrollToActive('auto');
             });
         }
     }

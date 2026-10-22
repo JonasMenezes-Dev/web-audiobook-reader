@@ -36,7 +36,7 @@ Abra o site do AudioLivro Pro no GitHub Pages. PDFs precisam que o backend estej
 - Selecione um PDF ou TXT na biblioteca editorial. Os recentes guardam apenas metadados e progresso; selecione novamente o arquivo original para retomar.
 - No leitor, abra **Aa** para ajustar fonte (16–28 px), espaçamento e largura da página. **Restaurar padrão** recupera os valores originais. Escape, o botão de fechar ou um clique fora fecham o painel.
 - As preferências ficam neste navegador. Se o armazenamento estiver indisponível, a leitura e os ajustes continuam na sessão, sem garantia de recuperação posterior.
-- O tema acompanha o sistema/navegador. A voz é automática; use o player para reproduzir/pausar, voltar/avançar frases e alternar a velocidade. Não há seletor de capítulos nesta versão.
+- O tema acompanha o sistema/navegador até você usar o botão de tema; a escolha manual fica salva. No player, selecione a voz, reproduza/pause, volte/avance frases e alterne a velocidade. Use o seletor de seções para navegar pelos capítulos detectados automaticamente.
 
 ## Se o PDF não abrir
 

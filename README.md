@@ -8,17 +8,19 @@ Aplicação web para transformar arquivos PDF e TXT em audiolivros, com leitura 
 - Extração estrutural de PDF com PyMuPDF, preservando a ordem visual, títulos e estilos.
 - Filtro de propaganda e de resíduos técnicos no processamento do PDF.
 - Narração com Web Speech API e velocidades de 0,7x, 1x, 1,25x, 1,5x e 2x.
-- Progresso e livros recentes salvos no navegador.
+- Progresso e livros recentes salvos no navegador, com retomada no trecho exato após selecionar novamente o arquivo original.
+- Navegação por capítulos e seções detectados automaticamente no texto.
+- Destaque sincronizado que acompanha cada frase narrada, rolando somente a área do texto.
 - Indicador visual durante o envio e processamento do arquivo.
 - Biblioteca editorial com capas tipográficas, página de leitura contínua em Lora e player compacto.
-- Temas claro e escuro acompanham a preferência do sistema/navegador; movimento reduzido é respeitado.
+- Temas claro e escuro acompanham o sistema/navegador até uma escolha manual pelo botão de tema, salva localmente; movimento reduzido é respeitado.
 - Painel **Aa** no leitor: tamanho de 16 a 28 px, três espaçamentos e três larguras, com opção de restaurar o padrão.
 
 As preferências de aparência usam a chave `audiolivro_reading_preferences_v1` e afetam somente o texto do livro. O padrão é 20 px no desktop e 18 px no celular. Dados inválidos são descartados; se o armazenamento estiver bloqueado ou cheio, os ajustes e a leitura continuam funcionando na sessão.
 
 Os recentes guardam **metadados e progresso, não o conteúdo dos arquivos**. Para retomar, selecione novamente o arquivo original no mesmo navegador. A gravação do progresso depende da disponibilidade do armazenamento local. Como a identificação atual usa o nome do arquivo, arquivos diferentes com o mesmo nome podem compartilhar a posição salva.
 
-A voz é escolhida automaticamente entre as disponíveis no navegador. Esta versão não possui seletor manual de voz nem navegação por capítulos; a navegação disponível é por frases.
+A voz inicial é escolhida entre as disponíveis no navegador. O seletor de voz do player permite alterá-la e guarda a escolha localmente. O controle de seções permite navegar pelos capítulos detectados automaticamente, sem substituir a leitura contínua. Quando não há seções detectadas, o controle fica desabilitado.
 
 ## Arquitetura
 
@@ -65,6 +67,8 @@ Confira a URL de `config.js`: o arquivo atualmente aponta para o serviço públi
 Para usar a versão publicada, abra o GitHub Pages do projeto e confira se `config.js` aponta para a URL pública atual do backend.
 
 ## Testes
+
+O GitHub Actions executa automaticamente os testes de regressão e de API em pushes para `main` e em pull requests. Confira o resultado na aba **Actions** do repositório.
 
 Na raiz do projeto, com as dependências instaladas:
 

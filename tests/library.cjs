@@ -52,14 +52,11 @@ test('recent books show only valid progress and tolerate damaged records', async
     assert.equal(await page.locator('.book-progress').count(), 2);
     assert.equal(await page.locator('.book-progress').first().getAttribute('value'), '40');
     assert.equal(await page.locator('#book-list img').count(), 0);
-    let resumeMessage;
-    page.once('dialog', async dialog => {
-        resumeMessage = dialog.message();
-        await dialog.dismiss();
-    });
     await page.locator('.recent-item').first().focus();
-    await page.keyboard.press('Enter');
-    assert.match(resumeMessage, /selecione o arquivo/);
+    const [resumeChooser] = await Promise.all([
+        page.waitForEvent('filechooser'), page.keyboard.press('Enter'),
+    ]);
+    assert.equal(resumeChooser.isMultiple(), false);
     for (const colorScheme of ['light', 'dark']) {
         await page.emulateMedia({ colorScheme, reducedMotion: 'reduce' });
         for (const width of [320, 375, 390, 768, 1024, 1440]) {
@@ -128,7 +125,10 @@ test('TXT drop, player controls and original-file reselection restore progress',
     const readerBefore = await page.locator('#pos-txt').textContent();
     await page.getByRole('button', { name: 'Sair da leitura e voltar à biblioteca', exact: true }).click();
     await page.waitForFunction(() => !document.getElementById('screen-import').hidden);
-    await page.locator('#file-input').setInputFiles({ name: 'leitura.txt', mimeType: 'text/plain', buffer: Buffer.from('Primeira frase para leitura. Segunda frase para ouvir. Terceira frase para continuar.') });
+    const [resumeChooser] = await Promise.all([
+        page.waitForEvent('filechooser'), page.locator('.recent-item').first().click(),
+    ]);
+    await resumeChooser.setFiles({ name: 'leitura.txt', mimeType: 'text/plain', buffer: Buffer.from('Primeira frase para leitura. Segunda frase para ouvir. Terceira frase para continuar.') });
     await page.waitForFunction(() => !document.getElementById('screen-reader').hidden);
     assert.equal(await page.locator('#pos-txt').textContent(), readerBefore);
     assert.equal(await page.locator('.player').evaluate(el => getComputedStyle(el).position), 'fixed');
@@ -188,5 +188,30 @@ test('real PDF backend imports the filtered sentences and rejects an invalid PDF
     assert.match(message, /Não foi possível processar o PDF pelo servidor/);
     assert.equal(await page.locator('#screen-reader').evaluate(el => el.hidden), true);
     assert.deepEqual(errors, []);
+    await page.close();
+});
+
+test('recent-book resume rejects a different file and restores the matching original', async () => {
+    const page = await openLibrary();
+    await page.goto(url);
+    const file = { name: 'Original demonstrativo.txt', mimeType: 'text/plain', buffer: Buffer.from('Primeira frase demonstrativa. Segunda frase demonstrativa. Terceira frase demonstrativa.') };
+    await page.locator('#file-input').setInputFiles(file);
+    await page.locator('#reading-area').waitFor({ state: 'visible' });
+    await page.getByRole('button', { name: 'Próxima frase', exact: true }).click();
+    await page.reload();
+    const [wrongChooser] = await Promise.all([
+        page.waitForEvent('filechooser'), page.locator('.recent-item').first().click(),
+    ]);
+    let message;
+    page.once('dialog', async dialog => { message = dialog.message(); await dialog.dismiss(); });
+    await wrongChooser.setFiles({ ...file, name: 'Outro arquivo.txt' });
+    assert.match(message, /selecione esse mesmo arquivo/);
+    assert.equal(await page.locator('#screen-reader').evaluate(el => el.hidden), true);
+    const [correctChooser] = await Promise.all([
+        page.waitForEvent('filechooser'), page.locator('.recent-item').first().click(),
+    ]);
+    await correctChooser.setFiles(file);
+    await page.locator('#reading-area').waitFor({ state: 'visible' });
+    assert.equal(await page.locator('.sent.reading').getAttribute('id'), 's-1');
     await page.close();
 });

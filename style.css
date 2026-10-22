@@ -28,8 +28,7 @@
     -webkit-overflow-scrolling: touch;
 }
 
-@media (prefers-color-scheme: dark) {
-    #screen-import {
+body[data-theme="dark"] #screen-import {
         --paper: #24211e;
         --paper-raised: #2d2924;
         --ink: #eee5d6;
@@ -39,7 +38,6 @@
         --cover: #453c31;
         --cover-ink: #eadcc6;
         color-scheme: dark;
-    }
 }
 
 .import-wrap {
@@ -207,8 +205,7 @@
     background: var(--reader-desk);
 }
 
-@media (prefers-color-scheme: dark) {
-    #screen-reader {
+body[data-theme="dark"] #screen-reader {
         --reader-desk: #24211e;
         --reader-paper: #302a24;
         --reader-ink: #eee3d1;
@@ -218,7 +215,6 @@
         --reader-rule: #50463a;
         --reader-highlight: #52422f;
         --reader-hover: #3b332a;
-    }
 }
 
 #screen-reader .reader-header {
@@ -250,6 +246,33 @@
 
 #screen-reader #btn-appearance { min-width: 44px; border: 1px solid var(--reader-rule); border-radius: 3px; font: 400 19px var(--font-read); }
 #screen-reader #btn-appearance[aria-expanded="true"] { background: var(--reader-highlight); }
+
+/* Main's theme, chapter and voice controls use the editorial palette. */
+body[data-theme="light"] { --bg: #f6f2e9; --bg-surface: #fbf8f1; --text: #38332d; --text-muted: #71675d; --accent: #8b5338; --border: #d9d0c2; color-scheme: light; }
+body[data-theme="dark"] { --bg: #24211e; --bg-surface: #2d2924; --text: #eee5d6; --text-muted: #b8ac9c; --accent: #d2a184; --border: #51473d; color-scheme: dark; }
+body[data-theme="light"] .sent.reading { color: var(--reader-ink); background: var(--reader-highlight); }
+.theme-toggle { position: fixed; z-index: 210; top: 18px; right: 24px; display: grid; place-items: center; width: 44px; height: 44px; border: 1px solid var(--border); border-radius: 3px; background: var(--bg-surface); color: var(--accent); cursor: pointer; }
+.theme-toggle svg { width: 20px; height: 20px; }
+.theme-toggle span { display: none; }
+.theme-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.library-header { padding-right: 64px; }
+#screen-reader .reader-header { padding-right: 88px; }
+.chapter-toolbar { flex-shrink: 0; display: flex; align-items: center; gap: 12px; padding: 6px max(24px, env(safe-area-inset-left)); border-bottom: 1px solid var(--reader-rule); background: var(--reader-paper); color: var(--reader-muted); }
+.chapter-toolbar label { font-size: 11px; }
+#chapter-select, #voice-select { min-width: 0; min-height: 44px; border: 1px solid var(--reader-rule); border-radius: 3px; background: var(--reader-paper); color: var(--reader-ink); font: 400 12px var(--font-ui); }
+#chapter-select { flex: 1; max-width: 440px; padding: 0 8px; }
+#chapter-select:disabled { color: var(--reader-muted); }
+#chapter-select:focus-visible, #voice-select:focus-visible { outline: 2px solid var(--reader-copper); outline-offset: 2px; }
+.player .player-position { gap: 0; }
+.voice-controls { min-width: 0; }
+#voice-select { width: 100%; max-width: 180px; font-size: 11px; }
+@media (max-width: 600px) {
+    .theme-toggle { top: 12px; right: 16px; }
+    #screen-reader.screen .reader-header { padding-right: 72px; }
+    .chapter-toolbar { padding-inline: 16px; }
+    .chapter-toolbar label { display: none; }
+}
+
 .reading-appearance {
     position: absolute;
     z-index: 200;
@@ -288,7 +311,7 @@
 .appearance-options label:has(:focus-visible) { outline: 2px solid var(--reader-copper); outline-offset: 2px; }
 #appearance-reset { width: 100%; margin-top: 24px; }
 #appearance-storage-status { margin-top: 12px; color: var(--reader-muted); font-size: 11px; }
-@media (prefers-color-scheme: dark) { .reading-appearance { color-scheme: dark; } }
+body[data-theme="dark"] .reading-appearance { color-scheme: dark; }
 
 #r-title {
     flex: 1;
@@ -312,17 +335,17 @@
 html,
 body {
     height: 100%;
-    background: var(--bg);
-    color: var(--text);
-    font-family: var(--font-ui);
     overflow: hidden;
+    background: var(--bg);
+    color:var(--text); font-family:var(--font-ui); -webkit-font-smoothing:antialiased;
+}
+button, input { font:inherit; }
+button { -webkit-tap-highlight-color:transparent; }
+button:focus-visible, [role="button"]:focus-visible, .prog-track:focus-visible {
+    outline:2px solid var(--accent); outline-offset:4px;
 }
 
-.screen {
-    height: 100%;
-    display: flex;
-    flex-direction: column;
-}
+.screen { height: 100%; min-height: 0; display: flex; flex-direction: column; }
 
 .screen[hidden] {
     display: none !important;
