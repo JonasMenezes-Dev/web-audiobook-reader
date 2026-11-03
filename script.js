@@ -62,6 +62,14 @@ const SPEEDS = [1.0, 1.25, 1.5, 2.0, 0.7];
 // o player após algumas pausas (o handler antigo reatribuía o novo).
 // A geração invalida callbacks obsoletos: só quem a criou pode reagir.
 let speechGeneration = 0;
+let speechPauseTimer = null;
+let pendingDocumentId = null;
+let requestedResumeId = null;
+let activeImport = null;
+let importGeneration = 0;
+let fileSelectionGeneration = 0;
+let sentenceElements = [];
+let lastHighlightedIndex = -1;
 
 let state = {
     title: '',
@@ -69,7 +77,15 @@ let state = {
     currentIdx: 0,
     rate: 1.0,
     playing: false,
-    chapters: []
+    chapters: [],
+    blocks: [],
+    structured: false,
+    sentenceBlocks: [],
+    documentId: null,
+    storageKey: null,
+    speechOffset: 0,
+    boundaryKnown: false,
+    storageAvailable: null
 };
 
 function log(...args) {
@@ -122,7 +138,10 @@ function loadVoices() {
     sortedVoices.forEach(voice => {
         const option = document.createElement('option');
         option.value = voiceKey(voice);
-        option.textContent = `${voice.name} — ${voice.lang || 'idioma desconhecido'}`;
+        const shortName = voice.name.replace(/^(?:Microsoft|Google)\s+/i, '').replace(/\s+[-—]\s+.*$/, '');
+        const region = (voice.lang || '').split('-')[1] || voice.lang || '?';
+        option.textContent = `${shortName} · ${region.toUpperCase()}`;
+        option.title = `${voice.name} — ${voice.lang || 'idioma desconhecido'}`;
         select.appendChild(option);
     });
 
@@ -131,6 +150,17 @@ function loadVoices() {
     select.value = availableKeys.has(savedVoiceKey) ? savedVoiceKey :
         availableKeys.has(previousKey) ? previousKey :
         preferred ? voiceKey(preferred) : voiceKey(voices[0]);
+    updateVoiceDescription();
+}
+
+function updateVoiceDescription() {
+    const select = document.getElementById('voice-select');
+    const voice = voices.find(value => voiceKey(value) === select?.value);
+    if (select && voice) {
+        const description = `${voice.name} — ${voice.lang || 'idioma desconhecido'}`;
+        select.title = description;
+        select.setAttribute('aria-description', description);
+    }
 }
 
 window.speechSynthesis.onvoiceschanged = loadVoices;
@@ -145,6 +175,7 @@ function getBestVoice() {
 const voiceSelect = document.getElementById('voice-select');
 if (voiceSelect) {
     voiceSelect.addEventListener('change', () => {
+        updateVoiceDescription();
         try {
             localStorage.setItem(VOICE_STORAGE_KEY, voiceSelect.value);
         } catch (_) {
@@ -153,7 +184,7 @@ if (voiceSelect) {
 
         // Se estiver lendo, aplica a nova voz imediatamente na frase atual.
         if (state.playing) {
-            cancelSpeech();
+            cancelSpeech(false);
             speak();
         }
     });
@@ -187,13 +218,36 @@ dropZone.addEventListener('drop', event => {
     fileInput.files = event.dataTransfer.files;
     fileInput.dispatchEvent(new Event('change', { bubbles: true }));
 });
-fileInput.addEventListener('cancel', () => { requestedResumeTitle = ''; });
+fileInput.addEventListener('cancel', () => { requestedResumeTitle = ''; requestedResumeId = null; });
+
+async function identifyFile(file) {
+    try {
+        const bytes = await file.arrayBuffer();
+        const digest = await crypto.subtle.digest('SHA-256', bytes);
+        return Array.from(new Uint8Array(digest), value => value.toString(16).padStart(2, '0')).join('');
+    } catch {
+        return null; // Sem identidade segura, não compartilhar progresso pelo nome.
+    }
+}
+
+function anchorHash(value) {
+    let a = 2166136261, b = 5381;
+    for (const char of String(value).replace(/\s+/g, ' ').trim()) {
+        a = Math.imul(a ^ char.charCodeAt(0), 16777619);
+        b = Math.imul(b, 33) ^ char.charCodeAt(0);
+    }
+    return (a >>> 0).toString(16).padStart(8, '0') + (b >>> 0).toString(16).padStart(8, '0');
+}
 
 fileInput.onchange = async e => {
     const file = e.target.files[0];
     if (!file) return;
+    const selection = ++fileSelectionGeneration;
+    let handedOff = false;
 
     try {
+        const expectedId = requestedResumeId;
+        requestedResumeId = null;
         if (requestedResumeTitle) {
             const expectedTitle = requestedResumeTitle;
             requestedResumeTitle = '';
@@ -202,16 +256,39 @@ fileInput.onchange = async e => {
                 return;
             }
         }
-        if (file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf')) {
-            await loadPDF(file);
-        } else if (file.type === 'text/plain' || file.name.toLowerCase().endsWith('.txt')) {
-            loadTXT(file);
-        } else {
+        const isPDF = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
+        const isTXT = file.type === 'text/plain' || file.name.toLowerCase().endsWith('.txt');
+        if (!isPDF && !isTXT) {
             alert('Formato não suportado. Use PDF ou TXT.');
+            return;
+        }
+        showLoading('Identificando arquivo', 'Conferindo a identidade local para recuperar o progresso…', null);
+        document.getElementById('cancel-import').onclick = () => {
+            fileSelectionGeneration++;
+            fileInput.value = '';
+            pendingDocumentId = null;
+            hideLoading();
+        };
+        const identity = await identifyFile(file);
+        if (selection !== fileSelectionGeneration) return;
+        if (expectedId && identity !== expectedId) {
+            alert('Este arquivo tem o mesmo nome, mas seu conteúdo é diferente. Selecione o original para retomar.');
+            return;
+        }
+        pendingDocumentId = identity;
+        handedOff = true;
+        if (isPDF) {
+            await loadPDF(file);
+        } else if (isTXT) {
+            loadTXT(file);
         }
     } finally {
         // Permite selecionar o mesmo arquivo novamente caso seja necessário.
-        fileInput.value = '';
+        if (selection === fileSelectionGeneration) {
+            fileInput.value = '';
+            pendingDocumentId = null;
+            if (!handedOff) hideLoading();
+        }
     }
 };
 
@@ -271,8 +348,10 @@ function hideLoading() {
 }
 
 function loadPDF(file) {
+    const documentId = pendingDocumentId;
     if (!API_BASE_URL) {
         alert('O servidor de PDFs ainda não foi configurado. Configure a URL pública em config.js.');
+        hideLoading();
         return Promise.resolve();
     }
 
@@ -280,6 +359,8 @@ function loadPDF(file) {
         const formData = new FormData();
         formData.append('file', file);
         const xhr = new XMLHttpRequest();
+        activeImport = xhr;
+        let cancelled = false;
         let responseOffset = 0;
         let pendingText = '';
         let resultReceived = false;
@@ -322,12 +403,15 @@ function loadPDF(file) {
 
             if (event.type === 'result') {
                 const data = event.data;
-                if (!data || !data.sentences || !data.sentences.length) {
+                const sentences = Array.isArray(data?.sentences) ? data.sentences :
+                    Array.isArray(data?.blocos_leitura) ? data.blocos_leitura.flatMap(block =>
+                        block.segmentos.filter(segment => Number.isInteger(segment.indice_frase)).map(segment => segment.texto)) : [];
+                if (!data || !sentences.length) {
                     throw new Error('O servidor não retornou frases utilizáveis.');
                 }
                 resultReceived = true;
                 updateLoading('Audiolivro pronto', 'Abrindo o leitor…', 100);
-                processText(data.texto_limpo || data.sentences.join(' '), data.filename || file.name, data.sentences);
+                processText('', data.filename || file.name, sentences, data.blocos_leitura, documentId);
             }
         }
 
@@ -355,23 +439,29 @@ function loadPDF(file) {
         };
 
         xhr.onprogress = () => {
+            if (xhr.status < 200 || xhr.status >= 300) return;
             try {
                 consumeResponseChunk();
             } catch (err) {
-                xhr.abort();
                 reject(err);
+                xhr.abort();
             }
         };
 
-        xhr.onerror = () => reject(new Error('Falha de conexão com o servidor.'));
-        xhr.onabort = () => reject(new Error('O processamento do PDF foi interrompido.'));
+        xhr.onerror = () => reject(new Error('Falha de conexão com o servidor. Verifique a conexão e tente selecionar o arquivo novamente.'));
+        xhr.onabort = () => { const error = new Error('Importação cancelada.'); error.cancelled = cancelled; reject(error); };
+        xhr.timeout = 180000;
+        xhr.ontimeout = () => reject(new Error('O servidor demorou mais de 3 minutos. Tente novamente ou divida o PDF.'));
+        document.getElementById('cancel-import').onclick = () => { cancelled = true; xhr.abort(); };
         xhr.onload = () => {
             try {
+                if (xhr.status < 200 || xhr.status >= 300) {
+                    let detail = '';
+                    try { detail = JSON.parse(xhr.responseText).detail || ''; } catch { /* erro sem JSON */ }
+                    throw new Error(typeof detail === 'string' && detail ? detail : `O servidor respondeu com status ${xhr.status}.`);
+                }
                 consumeResponseChunk();
                 if (pendingText.trim()) handleEvent(JSON.parse(pendingText));
-                if (xhr.status < 200 || xhr.status >= 300) {
-                    throw new Error(`O servidor respondeu com status ${xhr.status}`);
-                }
                 if (!resultReceived) {
                     throw new Error('O servidor encerrou a resposta sem retornar o PDF processado.');
                 }
@@ -381,18 +471,21 @@ function loadPDF(file) {
             }
         };
 
-        xhr.open('POST', `${API_BASE_URL}/upload-pdf-progress/`);
+        xhr.open('POST', `${API_BASE_URL}/upload-pdf-progress/?compact=true`);
         xhr.setRequestHeader('Accept', 'application/x-ndjson');
         xhr.send(formData);
     }).catch(err => {
-        console.error('PDF backend request failed:', err);
-        alert('Não foi possível processar o PDF pelo servidor. Verifique sua conexão e tente novamente.');
-    }).finally(hideLoading);
+        if (!err.cancelled) alert(`Não foi possível processar o PDF pelo servidor. ${err.message}`);
+    }).finally(() => { activeImport = null; hideLoading(); });
 }
 
 function loadTXT(file) {
+    const documentId = pendingDocumentId;
+    const generation = ++importGeneration;
     showLoading('Abrindo seu texto', 'Preparando a leitura do arquivo…', 0);
     const reader = new FileReader();
+    activeImport = reader;
+    document.getElementById('cancel-import').onclick = () => reader.abort();
 
     reader.onprogress = event => {
         if (event.lengthComputable) {
@@ -402,21 +495,25 @@ function loadTXT(file) {
     };
 
     reader.onload = e => {
+        if (generation !== importGeneration) return;
         try {
             updateLoading('Preparando a leitura', 'Texto carregado. Organizando o conteúdo…', null);
-            processText(e.target.result, file.name);
+            processText(e.target.result, file.name, undefined, null, documentId);
         } catch (err) {
             console.error('TXT processing failed:', err);
             alert('Não foi possível abrir este arquivo TXT.');
         } finally {
             hideLoading();
+            activeImport = null;
         }
     };
 
     reader.onerror = () => {
+        activeImport = null;
         hideLoading();
         alert('Erro ao ler o arquivo TXT.');
     };
+    reader.onabort = () => { importGeneration++; activeImport = null; hideLoading(); };
 
     reader.readAsText(file);
 }
@@ -455,8 +552,7 @@ function normalizeText(text) {
         return `${parseInt(d, 10)} de ${meses[mi - 1]} de ${y}`;
     });
 
-    // Separador de milhar: 1.500 -> 1500 (evita ler "um ponto quinhentos")
-    t = t.replace(/\b(\d{1,3})(\.\d{3})+\b/g, s => s.replace(/\./g, ''));
+    // Números e marcadores de seção permanecem intactos sem contexto inequívoco.
 
     // Limpeza de espaços em excesso
     // Mantém quebras de parágrafo para que a leitura preserve pausas naturais.
@@ -504,11 +600,27 @@ function splitIntoSentences(text) {
     for (const block of blocks) {
         const sentinel = '\u0000';
         const ellipses = [];
+        const addresses = [];
         let protectedBlock = block.replace(/\.{2,}|…+/g, match => {
             const marker = `${sentinel}E${ellipses.length}${sentinel}`;
             ellipses.push(match);
             return marker;
         });
+        protectedBlock = protectedBlock.replace(
+            /(?:https?:\/\/|www\.)[^\s<>]+|\b10\.\d{4,9}\/[^\s<>]+/gi,
+            value => {
+                const core = value.replace(/[.,;:!?)\]}]+$/, '');
+                const marker = `${sentinel}U${addresses.length}${sentinel}`;
+                addresses.push(core);
+                return marker + value.slice(core.length);
+            }
+        );
+        protectedBlock = protectedBlock.replace(
+            /\b(?:profa?|dr[ae]?|sra?|srta|pp?|figs?|vols?|eds?|orgs?|art|arts|cap|pág|págs)\.(?=\s+\S)/gi,
+            value => value.replace(/\./g, sentinel)
+        );
+        protectedBlock = protectedBlock.replace(/\bet\s+al\.(?=\s+[([])/gi, value => value.replace(/\./g, sentinel));
+        protectedBlock = protectedBlock.replace(/\b[A-ZÀ-Ý]\.(?=\s+[A-ZÀ-Ý])/g, value => value.replace(/\./g, sentinel));
 
         // Protege o marcador de seção inicial e pontos internos de números.
         protectedBlock = protectedBlock.replace(
@@ -523,6 +635,7 @@ function splitIntoSentences(text) {
         ) || [];
         for (const p of parts) {
             const s = p.trim()
+                .replace(/\u0000U(\d+)\u0000/g, (_, index) => addresses[Number(index)])
                 .replace(/\u0000E(\d+)\u0000/g, (_, index) => ellipses[Number(index)])
                 .replace(/\u0000/g, '.');
             if (s) out.push(s);
@@ -532,16 +645,42 @@ function splitIntoSentences(text) {
 }
 
 
-function processText(text, title, sentences) {
+function processText(text, title, sentences, blocks = null, documentId = null) {
+    cancelSpeech();
+    state.playing = false;
     state.title = title;
+    state.documentId = documentId;
+    state.storageAvailable = null;
+    state.storageKey = documentId ? `${STORAGE_KEY}_sha256:${documentId}` : null;
 
     // O backend (PDF) já envia as frases filtradas. O TXT é dividido aqui.
     // Filtra apenas trechos vazios/curtos demais (ex.: "Ele parou." continua).
     const base = sentences && Array.isArray(sentences)
-        ? sentences.filter(s => s && s.trim().length > 2)
-        : splitIntoSentences(normalizeText(text));
+        ? sentences.map(s => String(s || '').trim()).filter(Boolean)
+        : splitIntoSentences(text);
 
     state.sentences = base;
+    state.structured = Array.isArray(blocks);
+    state.blocks = state.structured ? blocks : [];
+    if (!state.structured && !Array.isArray(sentences)) {
+        let index = 0;
+        state.blocks = String(text).replace(/\r\n?/g, '\n').split(/\n\s*\n+/).filter(b => b.trim()).map((block, position) => {
+            const parts = splitIntoSentences(block);
+            const heading = detectChapters([block.trim()]).length > 0;
+            return { id: `texto-${position}`, tipo: heading ? 'titulo' : 'paragrafo', nivel: 1, pagina: null,
+                segmentos: parts.map(value => ({ texto: value, indice_frase: index++, trechos: [] })) };
+        });
+        state.structured = true;
+    }
+    if (!state.blocks.length) {
+        // Compatibilidade: só as frases aprovadas, nunca a estrutura bruta da API.
+        state.blocks = [{ id: 'texto-aprovado', tipo: 'paragrafo', pagina: null,
+            segmentos: base.map((value, index) => ({ texto: value, indice_frase: index, trechos: [] })) }];
+    }
+    state.sentenceBlocks = [];
+    state.blocks.forEach(block => block.segmentos.forEach(segment => {
+        if (Number.isInteger(segment.indice_frase)) state.sentenceBlocks[segment.indice_frase] = block;
+    }));
 
     if (state.sentences.length === 0) {
         alert('Não foi possível identificar frases no arquivo.');
@@ -553,25 +692,50 @@ function processText(text, title, sentences) {
     // Recupera o progresso salvo sem deixar dados locais corrompidos travarem a leitura.
     let prog = null;
     try {
-        const saved = localStorage.getItem(`${STORAGE_KEY}_${title}`);
+        const saved = state.storageKey ? localStorage.getItem(state.storageKey) : null;
         prog = saved ? JSON.parse(saved) : null;
+        if (prog && (prog.version !== 2 || prog.documentId !== documentId)) prog = null;
+        if (!prog && documentId) {
+            const legacy = JSON.parse(localStorage.getItem(`${STORAGE_KEY}_${title}`) || 'null');
+            if (legacy && Number.isInteger(legacy.currentIdx) &&
+                confirm('Há um progresso antigo salvo apenas pelo nome. Confirma que este é o mesmo arquivo e deseja reutilizar a posição aproximada?')) prog = legacy;
+        }
     } catch (err) {
+        state.storageAvailable = false;
         console.warn('Progresso salvo inválido; iniciando do começo.');
     }
 
-    const savedIndex = prog && Number.isInteger(prog.currentIdx) ? prog.currentIdx : 0;
+    let savedIndex = prog && Number.isInteger(prog.currentIdx) ? prog.currentIdx : 0;
+    let anchorMatched = false;
+    if (prog?.version === 2 && prog.anchor?.hash) {
+        const matches = state.sentences.map((sentence, index) => ({ index, hash: anchorHash(sentence) }))
+            .filter(item => item.hash === prog.anchor.hash);
+        const contextual = matches.filter(item =>
+            (!prog.anchor.previous || anchorHash(state.sentences[item.index - 1] || '') === prog.anchor.previous) &&
+            (!prog.anchor.next || anchorHash(state.sentences[item.index + 1] || '') === prog.anchor.next));
+        if (contextual.length === 1) { savedIndex = contextual[0].index; anchorMatched = true; }
+        else if (matches.length === 1) { savedIndex = matches[0].index; anchorMatched = true; }
+        else savedIndex = 0; // Não adivinhar a posição se o conteúdo mudou ou a âncora for ambígua.
+    }
     state.currentIdx = Math.max(0, Math.min(savedIndex, state.sentences.length - 1));
     state.rate = prog && SPEEDS.includes(prog.rate) ? prog.rate : 1.0;
+    const speechLength = normalizeText(state.sentences[state.currentIdx]).length;
+    state.speechOffset = anchorMatched && Number.isInteger(prog.speechOffset) &&
+        prog.speechOffset >= 0 && prog.speechOffset < speechLength ? prog.speechOffset : 0;
+    state.boundaryKnown = state.speechOffset > 0;
 
     document.getElementById('r-title').textContent = title;
-    document.querySelector('#btn-spd span').textContent = state.rate.toFixed(2) + 'x';
+    document.getElementById('btn-spd').value = String(state.rate);
 
     renderText();
     renderChapterOptions();
     document.getElementById('screen-import').hidden = true;
     document.getElementById('screen-reader').hidden = false;
+    document.querySelector('.reader-header').appendChild(document.getElementById('theme-toggle'));
 
     highlight();
+    updatePlaybackUI(documentId ? 'Leitura pronta. Alt e setas para cima ou baixo navegam pelos parágrafos.' :
+        'Leitura pronta. A identidade do arquivo não pôde ser verificada; o progresso desta sessão não será salvo.');
 }
 
 
@@ -580,9 +744,9 @@ function detectChapters(sentences) {
     const chapters = [];
     sentences.forEach((raw, index) => {
         const title = String(raw || '').trim();
-        if (!title || title.length > 100) return;
+        if (!title || title.length > 100 || /[.!?]$/.test(title)) return;
         const namedHeading = /^(?:cap[ií]tulo|chapter|parte|se[cç][aã]o|unidade|m[oó]dulo|ap[eê]ndice|introdu[cç][aã]o|conclus[aã]o|refer[eê]ncias|bibliografia)\b/i.test(title);
-        const numberedHeading = /^\d+(?:\.\d+){0,4}\.?\s+\S/.test(title);
+        const numberedHeading = /^\d+(?:\.\d+){1,4}\.?\s+\S|^\d+\.\s+\S/.test(title);
         const letters = title.match(/[A-Za-zÀ-ÿ]/g) || [];
         const uppercaseHeading = title.length <= 65 && letters.length >= 4 &&
             title === title.toLocaleUpperCase('pt-BR') && !/[.!?]$/.test(title);
@@ -596,7 +760,10 @@ function detectChapters(sentences) {
 function renderChapterOptions() {
     const select = document.getElementById('chapter-select');
     if (!select) return;
-    state.chapters = detectChapters(state.sentences);
+    state.chapters = state.structured ? state.blocks.filter(block => block.tipo === 'titulo').flatMap(block => {
+        const segment = block.segmentos.find(s => Number.isInteger(s.indice_frase));
+        return segment ? [{ index: segment.indice_frase, title: block.segmentos.map(s => s.texto).join(' '), level: block.nivel || 1 }] : [];
+    }) : detectChapters(state.sentences);
     select.replaceChildren();
     if (state.chapters.length === 0) {
         const option = document.createElement('option');
@@ -610,8 +777,7 @@ function renderChapterOptions() {
     state.chapters.forEach((chapter, position) => {
         const option = document.createElement('option');
         option.value = String(chapter.index);
-        const label = chapter.title.length > 54 ? chapter.title.slice(0, 51) + '…' : chapter.title;
-        option.textContent = `${position + 1}. ${label}`;
+        option.textContent = chapter.title;
         select.appendChild(option);
     });
     updateChapterSelection();
@@ -637,18 +803,49 @@ function goToChapter(value) {
 
 function renderText() {
     const container = document.getElementById('reading-inner');
-    container.replaceChildren();
+    const fragment = document.createDocumentFragment();
+    sentenceElements = [];
+    lastHighlightedIndex = -1;
 
-    state.sentences.forEach((sentence, index) => {
-        const span = document.createElement('span');
-        span.className = 'sent';
-        span.id = `s-${index}`;
-        span.textContent = sentence;
-        span.addEventListener('click', () => goTo(index));
-        container.appendChild(span);
-        container.appendChild(document.createTextNode(' '));
+    state.blocks.forEach(block => {
+        const tag = block.tipo === 'titulo' ? `h${Math.min(4, (block.nivel || 1) + 1)}` : 'p';
+        const element = document.createElement(tag);
+        element.className = 'reader-block';
+        element.id = block.id;
+        element.tabIndex = -1;
+        block.segmentos.forEach((segment, position) => {
+            if (position) element.appendChild(document.createTextNode(' '));
+            const span = document.createElement('span');
+            if (Number.isInteger(segment.indice_frase)) {
+                span.className = 'sent';
+                span.id = `s-${segment.indice_frase}`;
+                sentenceElements[segment.indice_frase] = span;
+            } else span.className = 'reference-text';
+            if (segment.trechos?.length && segment.trechos.map(t => t.texto).join('') === segment.texto) {
+                segment.trechos.forEach(trecho => {
+                    let part = document.createTextNode(trecho.texto);
+                    if (trecho.italico) { const em = document.createElement('em'); em.appendChild(part); part = em; }
+                    if (trecho.negrito) { const strong = document.createElement('strong'); strong.appendChild(part); part = strong; }
+                    span.appendChild(part);
+                });
+            } else {
+                const sentence = segment.texto;
+                span.textContent = sentence;
+            }
+            element.appendChild(span);
+        });
+        fragment.appendChild(element);
     });
+    container.replaceChildren(fragment);
 }
+
+document.getElementById('reading-inner').addEventListener('click', event => {
+    const container = event.currentTarget;
+    const selection = window.getSelection();
+    if (selection && !selection.isCollapsed && container.contains(selection.anchorNode)) return;
+    const sentence = event.target.closest('.sent');
+    if (sentence && container.contains(sentence)) goTo(Number(sentence.id.slice(2)));
+});
 
 
 // Salta para um índice mantendo a reprodução se ela estava ativa.
@@ -691,8 +888,14 @@ function scrollToActive(behavior = 'smooth') {
 
 
 function highlight(scroll = true, instant = false) {
-    document.querySelectorAll('.sent').forEach(el => el.classList.remove('reading'));
-    const active = document.getElementById(`s-${state.currentIdx}`);
+    sentenceElements[lastHighlightedIndex]?.classList.remove('reading');
+    const from = Math.max(0, Math.min(lastHighlightedIndex, state.currentIdx));
+    const to = Math.min(sentenceElements.length, Math.max(lastHighlightedIndex, state.currentIdx));
+    for (let index = from; index <= to; index++) {
+        sentenceElements[index]?.classList.toggle('already-read', index < state.currentIdx);
+    }
+    const active = sentenceElements[state.currentIdx];
+    lastHighlightedIndex = state.currentIdx;
 
     if (active) {
         active.classList.add('reading');
@@ -706,32 +909,49 @@ function highlight(scroll = true, instant = false) {
     document.getElementById('prog-fill').style.width = pct + '%';
     const progressTrack = document.getElementById('prog-track');
     if (progressTrack) progressTrack.setAttribute('aria-valuenow', String(Math.round(pct)));
+    if (progressTrack) progressTrack.setAttribute('aria-valuetext', `Frase ${Math.min(state.currentIdx + 1, state.sentences.length)} de ${state.sentences.length}`);
     document.getElementById('pos-txt').textContent = `${Math.min(state.currentIdx + 1, state.sentences.length)} / ${state.sentences.length}`;
     updateChapterSelection();
+    const source = document.getElementById('source-page');
+    const page = state.sentenceBlocks[state.currentIdx]?.pagina;
+    if (source) source.textContent = Number.isInteger(page) ? `PDF · p. ${page + 1}` : 'Texto';
     saveProgress();
 }
 
 
 function saveProgress() {
-    if (!state.title) return;
+    if (!state.title || !state.storageKey) return;
+    const anchorIndex = Math.min(state.currentIdx, state.sentences.length - 1);
 
     const data = {
         title: state.title,
         currentIdx: state.currentIdx,
         total: state.sentences.length,
         rate: state.rate,
-        date: Date.now()
+        date: Date.now(),
+        version: 2,
+        documentId: state.documentId,
+        speechOffset: state.speechOffset,
+        anchor: {
+            hash: anchorHash(state.sentences[anchorIndex] || ''),
+            previous: anchorIndex > 0 ? anchorHash(state.sentences[anchorIndex - 1]) : null,
+            next: anchorIndex + 1 < state.sentences.length ? anchorHash(state.sentences[anchorIndex + 1]) : null
+        }
     };
     // O progresso fica somente neste navegador/dispositivo.
     try {
-        localStorage.setItem(`${STORAGE_KEY}_${state.title}`, JSON.stringify(data));
+        localStorage.setItem(state.storageKey, JSON.stringify(data));
+        state.storageAvailable = true;
     } catch {
+        state.storageAvailable = false;
+        updatePlaybackUI('A leitura continua. O progresso não pôde ser salvo neste navegador.');
         // Armazenamento bloqueado ou cheio não deve interromper a leitura.
     }
 }
 
 
 function loadRecents() {
+    document.querySelector('.library-header').appendChild(document.getElementById('theme-toggle'));
     const list = document.getElementById('book-list');
     if (!list) return;
 
@@ -756,6 +976,12 @@ function loadRecents() {
 
     // Ordenar por data (mais recentes primeiro)
     items.sort((a, b) => b.date - a.date);
+    const savedSection = document.getElementById('saved-section');
+    const importSection = document.querySelector('.library-import');
+    if (items.length) {
+        importSection.before(savedSection);
+        document.getElementById('library-title').textContent = 'Continue seus estudos.';
+    } else importSection.after(savedSection);
     list.replaceChildren();
 
     if (items.length === 0) {
@@ -766,7 +992,7 @@ function loadRecents() {
         ornament.setAttribute('aria-hidden', 'true');
         ornament.textContent = '❧';
         const heading = document.createElement('h3');
-        heading.textContent = 'Sua próxima história está por chegar.';
+        heading.textContent = 'Seu primeiro material começa aqui.';
         const hint = document.createElement('p');
         hint.textContent = 'Selecione um PDF ou TXT acima. Quando houver leituras salvas neste navegador, elas aparecerão aqui.';
         empty.append(ornament, heading, hint);
@@ -774,7 +1000,8 @@ function loadRecents() {
         return;
     }
 
-    items.slice(0, 5).forEach(item => {
+    items.filter(item => item.version === 2 || !items.some(other => other.version === 2 && other.title === item.title))
+    .slice(0, 5).forEach(item => {
         const recent = document.createElement('button');
         recent.type = 'button';
         recent.className = 'recent-item';
@@ -821,6 +1048,7 @@ function loadRecents() {
 
         const resumeMessage = () => {
             requestedResumeTitle = item.title;
+            requestedResumeId = item.documentId || null;
             fileInput.click();
         };
         recent.addEventListener('click', resumeMessage);
@@ -832,20 +1060,38 @@ function loadRecents() {
 function togglePlay() {
     if (state.playing) {
         state.playing = false;
-        document.getElementById('play-icon').textContent = '▶';
-        cancelSpeech();
+        cancelSpeech(false);
+        updatePlaybackUI(state.boundaryKnown ? 'Pausado. A retomada começa na última palavra acompanhada.' :
+            'Pausado. Esta voz não informou a posição das palavras; ao retomar, a frase atual será reiniciada.');
     } else {
+        if (state.currentIdx >= state.sentences.length) {
+            state.currentIdx = 0;
+            state.speechOffset = 0;
+            state.boundaryKnown = false;
+            highlight(true, true);
+        }
         state.playing = true;
-        document.getElementById('play-icon').textContent = '⏸';
+        updatePlaybackUI('Reproduzindo.');
         speak();
     }
+    saveProgress();
+}
+
+function updatePlaybackUI(message = '') {
+    document.getElementById('play-icon').textContent = state.playing ? '⏸' : '▶';
+    const button = document.getElementById('btn-play');
+    button.setAttribute('aria-pressed', String(state.playing));
+    button.title = state.playing ? 'Pausar narração' : 'Reproduzir narração';
+    const status = document.getElementById('playback-status');
+    if (status && message) status.textContent = message +
+        (state.storageAvailable === false && !/progresso/i.test(message) ? ' O progresso não pôde ser salvo neste navegador.' : '');
 }
 
 function speak() {
     if (state.currentIdx >= state.sentences.length) {
         // Fim do livro: encerra a reprodução.
         state.playing = false;
-        document.getElementById('play-icon').textContent = '▶';
+        updatePlaybackUI('Leitura concluída. Reproduza para ouvir novamente desde o início.');
         return;
     }
     if (!state.playing) return;
@@ -853,19 +1099,40 @@ function speak() {
     // Nova instância por fala: evita que eventos de falas canceladas
     // reatribuam os handlers da fala corrente (causa do travamento).
     const generation = ++speechGeneration;
-    const utter = new SpeechSynthesisUtterance(state.sentences[state.currentIdx]);
+    const normalized = normalizeText(state.sentences[state.currentIdx]);
+    const offset = state.speechOffset < normalized.length ? state.speechOffset : 0;
+    const utter = new SpeechSynthesisUtterance(normalized.slice(offset));
     utter.voice = getBestVoice(); // Escolhe a voz mais humana disponível
     utter.rate = state.rate;      // Respeita exatamente a velocidade escolhida
     utter.pitch = 1.0;            // Ajuste entre 0.8 e 1.2 para mudar o tom
     utter.lang = utter.voice?.lang || 'pt-BR';
 
     log('[TTS] Trecho ' + String(state.currentIdx).padStart(3, '0'));
+    utter.onboundary = event => {
+        if (generation !== speechGeneration || !state.playing || event.name !== 'word') return;
+        if (Number.isInteger(event.charIndex) && event.charIndex >= 0 && event.charIndex < utter.text.length) {
+            state.speechOffset = offset + event.charIndex;
+            state.boundaryKnown = true;
+        }
+    };
 
     utter.onend = () => {
         if (generation !== speechGeneration || !state.playing) return;
+        const previousBlock = state.sentenceBlocks[state.currentIdx];
+        speechGeneration++; // O mesmo evento de fim não pode avançar duas vezes durante a pausa.
         state.currentIdx++;
+        state.speechOffset = 0;
+        state.boundaryKnown = false;
         highlight();
-        speak();
+        const nextBlock = state.sentenceBlocks[state.currentIdx];
+        if (nextBlock && previousBlock !== nextBlock) {
+            const nextGeneration = speechGeneration;
+            const delay = (previousBlock?.tipo === 'titulo' ? 320 : 220) / state.rate;
+            speechPauseTimer = setTimeout(() => {
+                speechPauseTimer = null;
+                if (nextGeneration === speechGeneration && state.playing) speak();
+            }, delay);
+        } else speak();
     };
 
     utter.onerror = (e) => {
@@ -874,16 +1141,22 @@ function speak() {
         if (e.error === 'interrupted' || e.error === 'canceled') return;
         console.error("Erro na síntese:", e);
         state.playing = false;
-        document.getElementById('play-icon').textContent = '▶';
+        updatePlaybackUI('A voz não conseguiu continuar. Tente reproduzir novamente ou selecione outra voz.');
     };
 
     window.speechSynthesis.speak(utter);
 }
 
 // Interrompe a fala atual invalidando os callbacks pendentes.
-function cancelSpeech() {
+function cancelSpeech(resetPosition = true) {
     speechGeneration++;
+    clearTimeout(speechPauseTimer);
+    speechPauseTimer = null;
     window.speechSynthesis.cancel();
+    if (resetPosition) {
+        state.speechOffset = 0;
+        state.boundaryKnown = false;
+    }
 }
 
 
@@ -898,13 +1171,20 @@ function prev() {
 function cycleSpeed() {
     let currentPos = SPEEDS.indexOf(state.rate);
     if (currentPos === -1) currentPos = 0;
-    state.rate = SPEEDS[(currentPos + 1) % SPEEDS.length];
-    document.querySelector('#btn-spd span').textContent = state.rate.toFixed(2) + 'x';
+    setSpeed(SPEEDS[(currentPos + 1) % SPEEDS.length]);
+}
+
+function setSpeed(value) {
+    const rate = Number(value);
+    if (!SPEEDS.includes(rate)) return;
+    state.rate = rate;
+    document.getElementById('btn-spd').value = String(rate);
     log('[TTS] Velocidade:', state.rate);
     if (state.playing) {
-        cancelSpeech();
+        cancelSpeech(false);
         speak();
     }
+    saveProgress();
 }
 
 function handleProgClick(e) {
@@ -913,3 +1193,23 @@ function handleProgClick(e) {
     const alvo = Math.min(state.sentences.length - 1, Math.floor(pct * state.sentences.length));
     jumpTo(alvo, true);
 }
+
+document.getElementById('prog-track').addEventListener('keydown', event => {
+    const last = state.sentences.length - 1;
+    const targets = { Home: 0, End: last, ArrowLeft: Math.max(0, state.currentIdx - 1),
+        ArrowRight: Math.min(last, state.currentIdx + 1), ArrowDown: Math.max(0, state.currentIdx - 1),
+        ArrowUp: Math.min(last, state.currentIdx + 1) };
+    if (!(event.key in targets) || last < 0) return;
+    event.preventDefault();
+    jumpTo(targets[event.key], true);
+});
+document.getElementById('reading-area').addEventListener('keydown', event => {
+    if (!event.altKey || !['ArrowUp', 'ArrowDown'].includes(event.key)) return;
+    const current = state.sentenceBlocks[state.currentIdx];
+    const blocks = state.blocks.filter(block => block.segmentos.some(s => Number.isInteger(s.indice_frase)));
+    const index = blocks.indexOf(current) + (event.key === 'ArrowDown' ? 1 : -1);
+    const target = blocks[Math.max(0, Math.min(blocks.length - 1, index))];
+    if (!target) return;
+    event.preventDefault();
+    jumpTo(target.segmentos.find(s => Number.isInteger(s.indice_frase)).indice_frase, true);
+});

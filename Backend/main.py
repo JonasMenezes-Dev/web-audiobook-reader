@@ -146,11 +146,17 @@ def reconstruir_estrutura_pdf(blocos):
 
     for span in ordenados:
         identificador = (span["pagina"], span["bloco"], span["linha"])
-        if (
-            identificador in linhas_margem
-            or re.fullmatch(
+        if identificador in linhas_margem or (
+            span.get("altura_pagina", 0)
+            and (span["y"] < span["altura_pagina"] * 0.08
+                 or span["y"] > span["altura_pagina"] * 0.92)
+            and re.fullmatch(
                 r"(?:[Pp][áa]g(?:ina)?\.?\s*)?\d{1,4}",
                 span["texto"].strip(),
+            )
+            and (
+                re.match(r"[Pp][áa]g", span["texto"].strip())
+                or span["texto"].strip() == str(span["pagina"] + 1)
             )
         ):
             continue
@@ -209,10 +215,21 @@ def reconstruir_estrutura_pdf(blocos):
                     <= max(18, tamanho_medio * 2)
             )
             espaco_vertical = linha["y"] - linha_anterior["y1"]
+            tamanho_anterior = linha_anterior["tamanho"]
+            mudou_tipografia = max(tamanho_medio, tamanho_anterior) >= min(
+                tamanho_medio, tamanho_anterior
+            ) * 1.2
+            recuo_inicial = (
+                tamanho_medio * 0.7 <= linha["x"] - linha_anterior["x"]
+                <= tamanho_medio * 3
+                and re.search(r'[.!?]["”)]?$', _texto_da_linha(linha_anterior["spans"]))
+            )
             novo_paragrafo = (
                 not mesma_coluna
                 or linha["pagina"] != linha_anterior["pagina"]
                 or espaco_vertical > tamanho_medio * 0.8
+                or mudou_tipografia
+                or recuo_inicial
             )
 
         if atual is None or novo_paragrafo:
@@ -229,22 +246,26 @@ def reconstruir_estrutura_pdf(blocos):
                 "_negrito": all(_span_negrito(span) for span in linha["spans"]),
             }
         else:
+            trechos_linha = _trechos_da_linha(linha["spans"])
             if atual["texto"].endswith("-") and texto_linha[:1].isalpha():
                 atual["texto"] = atual["texto"][:-1] + texto_linha
+                atual["trechos"][-1]["texto"] = atual["trechos"][-1]["texto"].rstrip()[:-1]
             else:
                 atual["texto"] += " " + texto_linha
-            atual["trechos"].extend(_trechos_da_linha(linha["spans"]))
+                trechos_linha[0]["texto"] = " " + trechos_linha[0]["texto"]
+            atual["trechos"].extend(trechos_linha)
             atual["_tamanho"] = max(atual["_tamanho"], tamanho_medio)
             atual["_negrito"] = atual["_negrito"] and all(
                 _span_negrito(span) for span in linha["spans"]
             )
+        linha["tamanho"] = tamanho_medio
         linha_anterior = linha
 
     if atual:
         paragrafos.append(atual)
 
     tamanhos = sorted(paragrafo["_tamanho"] for paragrafo in paragrafos)
-    tamanho_base = tamanhos[len(tamanhos) // 2] if tamanhos else 0
+    tamanho_base = tamanhos[(len(tamanhos) - 1) // 2] if tamanhos else 0
     for paragrafo in paragrafos:
         paragrafo["texto"] = re.sub(r"[ \t]+", " ", paragrafo["texto"]).strip()
         if paragrafo["texto"].endswith("-"):
@@ -296,7 +317,9 @@ def _detectar_margens_blocos(blocos):
     return {
         identificador
         for identificador, dados in linhas.items()
-        if _texto_da_linha(sorted(dados["spans"], key=lambda span: span["x"])) in repetidos
+        if (dados["y"] <= dados["altura_pagina"] * 0.12
+            or dados["y"] >= dados["altura_pagina"] * 0.88)
+        and _texto_da_linha(sorted(dados["spans"], key=lambda span: span["x"])) in repetidos
     }
 
 
@@ -394,11 +417,16 @@ def _span_negrito(span):
 
 def _trechos_da_linha(spans):
     trechos = []
+    ultimo = None
     for span in spans:
         fonte = span.get("fonte", "")
         flags = span.get("flags", 0)
+        texto = span["texto"]
+        if ultimo and not ultimo["texto"][-1:].isspace() and not texto[:1].isspace():
+            if span["x"] - ultimo["x1"] > max(1, (span.get("tamanho", 10) or 10) * 0.15):
+                texto = " " + texto
         trechos.append({
-            "texto": span["texto"],
+            "texto": texto,
             "fonte": fonte,
             "tamanho": span.get("tamanho", 0),
             "negrito": _span_negrito(span),
@@ -406,6 +434,10 @@ def _trechos_da_linha(spans):
                 estilo in fonte.lower() for estilo in ("italic", "oblique")
             ),
         })
+        ultimo = span
+    if trechos:
+        trechos[0]["texto"] = trechos[0]["texto"].lstrip()
+        trechos[-1]["texto"] = trechos[-1]["texto"].rstrip()
     return trechos
 
 
@@ -569,6 +601,7 @@ def dividir_em_frases(texto):
     # Sentinelas impedem que separadores numéricos e reticências virem cortes.
     SENT = '\x00'
     reticencias_protegidas = {}
+    enderecos_protegidos = {}
 
     def proteger(m):
         return m.group(0).replace('.', SENT)
@@ -578,6 +611,13 @@ def dividir_em_frases(texto):
         reticencias_protegidas[marcador] = m.group(0)
         return marcador
 
+    def proteger_endereco(m):
+        valor = m.group(0)
+        principal = valor.rstrip('.,;:!?)]}')
+        marcador = f"{SENT}U{len(enderecos_protegidos)}{SENT}"
+        enderecos_protegidos[marcador] = principal
+        return marcador + valor[len(principal):]
+
     frases = []
     for paragrafo in texto.split('\n\n'):
         paragrafo = paragrafo.replace('\n', ' ').strip()
@@ -585,6 +625,19 @@ def dividir_em_frases(texto):
             continue
 
         paragrafo = re.sub(r'\.{2,}|…+', proteger_reticencias, paragrafo)
+
+        # Protege endereços completos, deixando a pontuação final fora deles.
+        paragrafo = re.sub(
+            r'(?:https?://|www\.)[^\s<>]+|\b10\.\d{4,9}/[^\s<>]+',
+            proteger_endereco,
+            paragrafo, flags=re.IGNORECASE,
+        )
+        paragrafo = re.sub(
+            r'\b(?:profa?|dr[ae]?|sra?|srta|pp?|figs?|vols?|eds?|orgs?|art|arts|cap|pág|págs)\.(?=\s+\S)',
+            lambda m: m.group(0).replace('.', SENT), paragrafo, flags=re.IGNORECASE,
+        )
+        paragrafo = re.sub(r'\bet\s+al\.(?=\s+[([])', proteger, paragrafo, flags=re.IGNORECASE)
+        paragrafo = re.sub(r'\b[A-ZÀ-Ý]\.(?=\s+[A-ZÀ-Ý])', proteger, paragrafo)
 
         # Protege decimal/milhar, numeração hierárquica e marcador de seção no
         # início do parágrafo ("1. Introdução") antes de procurar frases.
@@ -601,6 +654,8 @@ def dividir_em_frases(texto):
         )
         for p in partes:
             s = p.strip()
+            for marcador, endereco in enderecos_protegidos.items():
+                s = s.replace(marcador, endereco)
             for marcador, reticencias in reticencias_protegidas.items():
                 s = s.replace(marcador, reticencias)
             s = s.replace(SENT, '.')
@@ -810,9 +865,20 @@ def filtrar_estrutura_para_leitura(estrutura):
     frases_originais = []
     classificacoes = []
     frases_filtradas = []
+    blocos_leitura = []
     contextos = _contextos_estrutura_para_leitura(estrutura)
 
     for indice, elemento in enumerate(estrutura):
+        segmentos = []
+        cursor = 0
+        intervalos_estilo = []
+        cursor_estilo = 0
+        for trecho in elemento.get("trechos", []):
+            valor = re.sub(r'[ \t]+', ' ', trecho["texto"]).strip()
+            inicio = elemento["texto"].find(valor, cursor_estilo) if valor else -1
+            if inicio >= 0:
+                intervalos_estilo.append((inicio, inicio + len(valor), trecho))
+                cursor_estilo = inicio + len(valor)
         frases_elemento = dividir_em_frases(elemento["texto"])
         visualmente_separado = (
             len(frases_elemento) == 1 and len(elemento["texto"].strip()) <= 100
@@ -823,6 +889,10 @@ def filtrar_estrutura_para_leitura(estrutura):
             contexto=contextos[indice],
         )
         for frase in frases_elemento:
+            inicio_frase = elemento["texto"].find(frase, cursor)
+            if inicio_frase < 0:
+                inicio_frase = cursor
+            cursor = inicio_frase + len(frase)
             classificacao = (
                 classificacao_elemento
                 if classificacao_elemento["tipo"] == "LIXO_TECNICO"
@@ -840,11 +910,44 @@ def filtrar_estrutura_para_leitura(estrutura):
             })
             if not classificacao["ignorar"]:
                 frases_filtradas.append(frase)
+            referencia = (
+                classificacao["tipo"] == "URL"
+                and not contextos[indice].get("catalogo_editorial")
+                and classificacao_elemento["tipo"] != "LIXO_TECNICO"
+            )
+            if not classificacao["ignorar"] or referencia:
+                trechos = []
+                posicao = inicio_frase
+                for inicio, fim, estilo in intervalos_estilo:
+                    a, b = max(inicio, inicio_frase), min(fim, cursor)
+                    if a >= b:
+                        continue
+                    if posicao < a:
+                        trechos.append({"texto": elemento["texto"][posicao:a], "negrito": False, "italico": False})
+                    trechos.append({"texto": elemento["texto"][a:b],
+                                    "negrito": bool(estilo.get("negrito")),
+                                    "italico": bool(estilo.get("italico"))})
+                    posicao = b
+                if posicao < cursor:
+                    trechos.append({"texto": elemento["texto"][posicao:cursor], "negrito": False, "italico": False})
+                segmentos.append({
+                    "texto": frase, "trechos": trechos,
+                    "indice_frase": None if referencia else len(frases_filtradas) - 1,
+                })
+
+        if segmentos:
+            numero = re.match(r'^(\d+(?:\.\d+)*)\.?\s', elemento["texto"])
+            nivel = min(3, numero.group(1).count('.') + 1) if numero else 1
+            blocos_leitura.append({
+                "id": f"bloco-{indice}", "tipo": elemento.get("tipo", "paragrafo"),
+                "nivel": nivel, "pagina": elemento.get("pagina"), "segmentos": segmentos,
+            })
 
     return {
         "frases_originais": frases_originais,
         "frases_filtradas": frases_filtradas,
         "classificacoes": classificacoes,
+        "blocos_leitura": blocos_leitura,
     }
 
 
@@ -855,6 +958,8 @@ def home():
 def _processar_pdf_completo(contents, filename, progress_callback=None, stage_callback=None):
     """Executa o pipeline existente de PDF sem alterar suas regras de extração."""
     blocos = extrair_blocos_pdf(contents, progress_callback=progress_callback)
+    if not blocos:
+        raise ValueError("Este PDF não contém texto selecionável. Digitalizações precisam de OCR antes da importação.")
     if stage_callback:
         stage_callback("rebuilding")
     estrutura = reconstruir_estrutura_pdf(blocos)
@@ -872,6 +977,8 @@ def _processar_pdf_completo(contents, filename, progress_callback=None, stage_ca
         "sentences_original": resultado_leitura["frases_originais"],
         "classificacoes_conteudo": resultado_leitura["classificacoes"],
         "estrutura": estrutura,
+        "blocos_leitura": resultado_leitura["blocos_leitura"],
+        "versao_estrutura": 1,
     }
 
 
@@ -883,6 +990,8 @@ async def processar_pdf(file: UploadFile = File()):
     contents = await _read_and_validate_pdf(file)
     try:
         return _processar_pdf_completo(contents, file.filename)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     except HTTPException:
         raise
     except Exception as exc:
@@ -892,7 +1001,7 @@ async def processar_pdf(file: UploadFile = File()):
         ) from exc
 
 
-async def _stream_pdf_processing(contents, filename):
+async def _stream_pdf_processing(contents, filename, compact=False):
     """Envia eventos NDJSON durante a extração e o processamento final."""
     events = queue.Queue()
 
@@ -915,7 +1024,13 @@ async def _stream_pdf_processing(contents, filename):
                 progress_callback=report_pages,
                 stage_callback=report_stage,
             )
+            if compact:
+                result = {key: result[key] for key in (
+                    "filename", "total_frases", "total_frases_originais", "blocos_leitura", "versao_estrutura"
+                )}
             events.put({"type": "result", "data": result})
+        except ValueError as exc:
+            events.put({"type": "error", "message": str(exc)})
         except Exception:
             # Não exponha detalhes internos nem caminhos do servidor ao cliente.
             events.put({
@@ -936,13 +1051,13 @@ async def _stream_pdf_processing(contents, filename):
 
 
 @app.post("/upload-pdf-progress/")
-async def processar_pdf_com_progresso(file: UploadFile = File()):
+async def processar_pdf_com_progresso(file: UploadFile = File(), compact: bool = False):
     if fitz is None:
         raise HTTPException(status_code=400, detail="Instale PyMuPDF: pip install pymupdf")
 
     contents = await _read_and_validate_pdf(file)
     return StreamingResponse(
-        _stream_pdf_processing(contents, file.filename),
+        _stream_pdf_processing(contents, file.filename, compact=compact),
         media_type="application/x-ndjson",
         headers={
             "Cache-Control": "no-cache, no-transform",

@@ -230,7 +230,8 @@ def test_load_pdf_nao_contorna_filtro_quando_backend_falha():
     assert "xhr.status < 200 || xhr.status >= 300" in source
     assert "if (!resultReceived)" in source
     assert "Não foi possível processar o PDF pelo servidor" in source
-    assert "processText(data.texto_limpo || data.sentences.join(' '), data.filename || file.name, data.sentences)" in source
+    assert "data.filename || file.name, sentences, data.blocos_leitura, documentId)" in source
+    assert "data.estrutura" not in source  # Nunca renderizar a estrutura anterior ao filtro.
     assert "pdfjsLib" not in source
     assert "buildTextFromItems" not in source
 def test_splitter_nao_descarta_frases_legitimamente_curtas():
@@ -651,7 +652,7 @@ def test_speak_nao_cancela_a_cada_fala():
     """speak() nao deve chamar cancel() — isso pulava trechos."""
     src = SCRIPT_JS.read_text(encoding="utf-8")
     ini = src.index("function speak()")
-    fim = src.index("function cancelSpeech()")
+    fim = src.index("function cancelSpeech(")
     corpo = src[ini:fim]
     assert "speechSynthesis.cancel()" not in corpo, (
         "speak() ainda cancela a fala a cada chamada (causa de trechos pulados)"

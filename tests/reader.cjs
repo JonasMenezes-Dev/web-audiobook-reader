@@ -144,8 +144,8 @@ test('editorial player keeps playback, seeking, speeds and keyboard controls', a
     await page.getByRole('button', { name: 'Frase anterior', exact: true }).click();
     assert.equal(await page.locator('.sent.reading').getAttribute('id'), 's-0');
     for (const rate of [1.25, 1.5, 2, 0.7, 1]) {
-        await page.locator('#btn-spd').click();
-        assert.equal(await page.locator('#btn-spd').textContent(), rate.toFixed(2) + 'x');
+        await page.locator('#btn-spd').selectOption(String(rate));
+        assert.equal(Number(await page.locator('#btn-spd').inputValue()), rate);
         // The native SpeechSynthesisUtterance rate is stored as a float32.
         assert.ok(Math.abs(await page.evaluate(() => window.testUtterance.rate) - rate) < 1e-6);
     }
