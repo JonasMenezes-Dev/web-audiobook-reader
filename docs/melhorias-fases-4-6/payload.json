@@ -1,0 +1,28 @@
+[
+  {
+    "pages": 50,
+    "pdf_bytes": 425564,
+    "full": {
+      "bytes": 1782645,
+      "seconds": 0.3294836999848485
+    },
+    "compact": {
+      "bytes": 586497,
+      "seconds": 0.3027416000259109
+    },
+    "reduction_percent": 67.09961882483613
+  },
+  {
+    "pages": 200,
+    "pdf_bytes": 1711420,
+    "full": {
+      "bytes": 7182329,
+      "seconds": 1.2860308999661356
+    },
+    "compact": {
+      "bytes": 2361921,
+      "seconds": 1.229536900005769
+    },
+    "reduction_percent": 67.11483141471241
+  }
+]

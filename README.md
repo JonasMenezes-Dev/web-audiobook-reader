@@ -6,11 +6,15 @@ Aplicação web para transformar arquivos PDF e TXT em audiolivros, com leitura 
 
 - Importação de PDF pelo backend e de TXT diretamente no navegador.
 - Extração estrutural de PDF com PyMuPDF, preservando a ordem visual, títulos e estilos.
+- Leitor com títulos e parágrafos separados, negrito/itálico e indicação da página de origem. Referências com URL permanecem visíveis e copiáveis, sem narração quando isoladas.
 - Filtro de propaganda e de resíduos técnicos no processamento do PDF.
 - Narração com Web Speech API e velocidades de 0,7x, 1x, 1,25x, 1,5x e 2x.
 - Progresso e livros recentes salvos no navegador, com retomada no trecho exato após selecionar novamente o arquivo original.
 - Navegação por capítulos e seções detectados automaticamente no texto.
 - Destaque sincronizado que acompanha cada frase narrada, rolando somente a área do texto.
+- Pausas curtas entre blocos; retomada pela última palavra informada pela voz. Quando a voz não fornece essa posição, um aviso informa que a frase será reiniciada.
+- Reinício pelo botão de reprodução após concluir, posição por teclado (setas, Home/End) e navegação entre blocos com Alt + ↑/↓ na área do texto.
+- Upload de PDF com cancelamento, limite de espera de três minutos e mensagens específicas para senha, limites e ausência de texto selecionável/OCR.
 - Indicador visual durante o envio e processamento do arquivo.
 - Biblioteca editorial com capas tipográficas, página de leitura contínua em Lora e player compacto.
 - Temas claro e escuro acompanham o sistema/navegador até uma escolha manual pelo botão de tema, salva localmente; movimento reduzido é respeitado.
@@ -18,9 +22,11 @@ Aplicação web para transformar arquivos PDF e TXT em audiolivros, com leitura 
 
 As preferências de aparência usam a chave `audiolivro_reading_preferences_v1` e afetam somente o texto do livro. O padrão é 20 px no desktop e 18 px no celular. Dados inválidos são descartados; se o armazenamento estiver bloqueado ou cheio, os ajustes e a leitura continuam funcionando na sessão.
 
-Os recentes guardam **metadados e progresso, não o conteúdo dos arquivos**. Para retomar, selecione novamente o arquivo original no mesmo navegador. A gravação do progresso depende da disponibilidade do armazenamento local. Como a identificação atual usa o nome do arquivo, arquivos diferentes com o mesmo nome podem compartilhar a posição salva.
+Os recentes guardam **metadados e progresso, não o conteúdo dos arquivos**. Para retomar, selecione novamente o arquivo original no mesmo navegador. A identidade é calculada localmente por SHA-256 do arquivo; materiais com o mesmo nome e conteúdos diferentes têm posições independentes. Âncoras de frases e de contexto são hashes, sem texto do livro no armazenamento. A velocidade é salva assim que muda. Registros antigos baseados apenas no nome exigem confirmação antes de reutilizar a posição aproximada. Se a identidade segura ou o armazenamento estiverem indisponíveis, a leitura continua na sessão; o aviso no leitor explica quando o progresso não pode ser salvo.
 
 A voz inicial é escolhida entre as disponíveis no navegador. O seletor de voz do player permite alterá-la e guarda a escolha localmente. O controle de seções permite navegar pelos capítulos detectados automaticamente, sem substituir a leitura contínua. Quando não há seções detectadas, o controle fica desabilitado.
+
+O texto mostrado mantém números, datas e moeda do documento. Ajustes de pronúncia são aplicados somente à fala. A duração e a qualidade do áudio dependem da voz e do navegador; os testes simulados não comprovam naturalidade nem precisão acústica das taxas.
 
 ## Arquitetura
 
@@ -32,6 +38,8 @@ A voz inicial é escolhida entre as disponíveis no navegador. O seletor de voz 
 - **Configuração:** `config.js` define a URL do backend e seu valor prevalece também no desenvolvimento local. Para usar a API local, aponte-o para `http://127.0.0.1:8000`; para publicação, mantenha a URL pública do serviço. O endereço local só é usado como padrão se não houver URL configurada.
 
 O processamento de PDF depende do backend. Se ele estiver indisponível, a aplicação informa a falha e **não tenta ler o PDF por um caminho alternativo que possa ignorar o filtro de conteúdo**.
+
+A API acrescenta `versao_estrutura: 1` e `blocos_leitura` aos campos já existentes. Cada bloco contém `id`, `tipo`, `nivel`, `pagina` (base zero) e `segmentos`; cada segmento contém texto, estilos e `indice_frase`, ou `null` para referências visíveis não narradas. Esses blocos são produzidos após as decisões de filtragem. `estrutura` e `texto_limpo` continuam existindo para compatibilidade/diagnóstico e não devem ser renderizados diretamente. O frontend aceita respostas antigas usando somente `sentences`, já filtradas. As melhorias estruturais de PDF exigem a nova versão do backend; atualizar apenas o frontend não modifica a extração no servidor público.
 
 ## Como executar localmente
 
@@ -81,7 +89,7 @@ O conjunto verifica a extração estrutural, a ordem de leitura, a divisão em f
 Os testes de navegador usam Node.js e Playwright como ferramentas de desenvolvimento, sem dependências adicionais no frontend. Com o módulo `playwright` disponível para o Node e seu Chromium instalado:
 
 ```bash
-node --test --test-concurrency=1 --test-timeout=30000 tests/library.cjs tests/reader.cjs
+node --test --test-concurrency=1 --test-timeout=30000 tests/library.cjs tests/reader.cjs tests/study.cjs tests/study-pure.cjs
 ```
 
 Para uma instalação externa do Playwright, configure `NODE_PATH` com a pasta `node_modules`. `CHROMIUM_PATH` permite indicar um executável existente. Os testes verificam biblioteca, player, preferências, teclado, armazenamento indisponível, movimento reduzido e larguras de 320 a 1440 px. A narração é simulada para verificar controles e sincronização; isso não valida a qualidade do áudio real.

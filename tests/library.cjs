@@ -119,9 +119,11 @@ test('TXT drop, player controls and original-file reselection restore progress',
     await page.locator('#btn-play').click();
     await page.locator('button[onclick="next()"]').click();
     await page.locator('#btn-play').click();
-    const saved = await page.evaluate(() => JSON.parse(localStorage.getItem('audiolivro_v1_leitura.txt')));
+    const saved = await page.evaluate(() => JSON.parse(localStorage.getItem(state.storageKey)));
     assert.ok(saved.currentIdx > 0);
-    assert.deepEqual(Object.keys(saved).sort(), ['currentIdx', 'date', 'rate', 'title', 'total']);
+    assert.deepEqual(Object.keys(saved).sort(), ['anchor', 'currentIdx', 'date', 'documentId', 'rate', 'speechOffset', 'title', 'total', 'version']);
+    assert.equal(saved.version, 2);
+    assert.match(saved.documentId, /^[0-9a-f]{64}$/);
     const readerBefore = await page.locator('#pos-txt').textContent();
     await page.getByRole('button', { name: 'Sair da leitura e voltar à biblioteca', exact: true }).click();
     await page.waitForFunction(() => !document.getElementById('screen-import').hidden);
@@ -138,7 +140,7 @@ test('TXT drop, player controls and original-file reselection restore progress',
 test('unavailable PDF backend shows an error without bypassing its filter', async () => {
     const page = await openLibrary();
     let requests = 0;
-    await page.route('**/upload-pdf-progress/', route => {
+    await page.route('**/upload-pdf-progress/**', route => {
         requests++;
         return route.abort('connectionfailed');
     });
@@ -167,7 +169,7 @@ test('real PDF backend imports the filtered sentences and rejects an invalid PDF
     const errors = [];
     page.on('pageerror', error => errors.push(error.message));
     await page.goto(url);
-    const resultResponse = page.waitForResponse(response => response.url().endsWith('/upload-pdf-progress/'));
+    const resultResponse = page.waitForResponse(response => response.url().includes('/upload-pdf-progress/'));
     await page.locator('#file-input').setInputFiles(join(__dirname, 'fixtures', 'regressao.pdf'));
     const response = await resultResponse;
     assert.equal(response.status(), 200);
@@ -175,13 +177,14 @@ test('real PDF backend imports the filtered sentences and rejects an invalid PDF
     assert.ok(events.some(event => event.type === 'progress'));
     const result = events.find(event => event.type === 'result').data;
     await page.waitForFunction(() => !document.getElementById('screen-reader').hidden && document.getElementById('loading-overlay').hidden);
-    assert.ok(result.sentences.length > 0);
-    assert.deepEqual(await page.locator('.sent').allTextContents(), result.sentences);
+    const sentences = result.sentences || result.blocos_leitura.flatMap(block => block.segmentos.filter(segment => segment.indice_frase !== null).map(segment => segment.texto));
+    assert.ok(sentences.length > 0);
+    assert.deepEqual(await page.locator('.sent').allTextContents(), sentences);
     await page.getByRole('button', { name: 'Sair da leitura e voltar à biblioteca', exact: true }).click();
     await page.locator('#drop-zone').waitFor({ state: 'visible' });
     let message;
     page.once('dialog', async dialog => { message = dialog.message(); await dialog.dismiss(); });
-    const errorResponse = page.waitForResponse(response => response.url().endsWith('/upload-pdf-progress/'));
+    const errorResponse = page.waitForResponse(response => response.url().includes('/upload-pdf-progress/'));
     await page.locator('#file-input').setInputFiles({ name: 'invalido.pdf', mimeType: 'application/pdf', buffer: Buffer.from('%PDF-1.4\n') });
     assert.ok((await errorResponse).status() >= 400);
     await page.waitForFunction(() => document.getElementById('loading-overlay').hidden);

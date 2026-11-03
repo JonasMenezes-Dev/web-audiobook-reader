@@ -1,0 +1,494 @@
+{
+  "cases": {
+    "titulo_proximo_ao_corpo": {
+      "estrutura": [
+        {
+          "tipo": "paragrafo",
+          "texto": "Metodologia O método reúne evidências para avaliar a hipótese.",
+          "pagina": 0,
+          "x": 55.0,
+          "y": 47.87999725341797,
+          "trechos": [
+            {
+              "texto": "Metodologia",
+              "fonte": "Helvetica-Bold",
+              "tamanho": 16.0,
+              "negrito": true,
+              "italico": false
+            },
+            {
+              "texto": "O método reúne evidências para avaliar a hipótese.",
+              "fonte": "Helvetica",
+              "tamanho": 11.0,
+              "negrito": false,
+              "italico": false
+            }
+          ]
+        }
+      ],
+      "sentences": [
+        "Metodologia O método reúne evidências para avaliar a hipótese."
+      ]
+    },
+    "paragrafos_com_recuo_de_15pt": {
+      "estrutura": [
+        {
+          "tipo": "paragrafo",
+          "texto": "Primeiro parágrafo termina aqui. Outro parágrafo começa com recuo.",
+          "pagina": 0,
+          "x": 55.0,
+          "y": 53.17499923706055,
+          "trechos": [
+            {
+              "texto": "Primeiro parágrafo termina aqui.",
+              "fonte": "Helvetica",
+              "tamanho": 11.0,
+              "negrito": false,
+              "italico": false
+            },
+            {
+              "texto": "Outro parágrafo começa com recuo.",
+              "fonte": "Helvetica",
+              "tamanho": 11.0,
+              "negrito": false,
+              "italico": false
+            }
+          ]
+        }
+      ],
+      "sentences": [
+        "Primeiro parágrafo termina aqui.",
+        "Outro parágrafo começa com recuo."
+      ]
+    },
+    "valores_isolados_em_tabela": {
+      "estrutura": [
+        {
+          "tipo": "paragrafo",
+          "texto": "Ano Quantidade",
+          "pagina": 0,
+          "x": 55.0,
+          "y": 53.17499923706055,
+          "trechos": [
+            {
+              "texto": "Ano",
+              "fonte": "Helvetica",
+              "tamanho": 11.0,
+              "negrito": false,
+              "italico": false
+            },
+            {
+              "texto": "Quantidade",
+              "fonte": "Helvetica",
+              "tamanho": 11.0,
+              "negrito": false,
+              "italico": false
+            }
+          ]
+        }
+      ],
+      "sentences": [
+        "Ano Quantidade"
+      ]
+    }
+  },
+  "abbreviations": [
+    "O Prof.",
+    "Silva consultou a p.",
+    "25.",
+    "A Dra.",
+    "Souza concordou."
+  ],
+  "benchmarks": [
+    {
+      "pages": 1,
+      "pdf_bytes": 8968,
+      "seconds": [
+        0.006731599976774305,
+        0.0063572999788448215,
+        0.006478700030129403
+      ],
+      "median_seconds": 0.006478700030129403,
+      "sentences": 70,
+      "response_bytes": 25317
+    },
+    {
+      "pages": 50,
+      "pdf_bytes": 433929,
+      "seconds": [
+        0.28897420002613217,
+        0.2821031999774277,
+        0.28426719998242334
+      ],
+      "median_seconds": 0.28426719998242334,
+      "sentences": 3500,
+      "response_bytes": 1268631
+    },
+    {
+      "pages": 200,
+      "pdf_bytes": 1746546,
+      "seconds": [
+        1.1094084000214934,
+        1.1441359000164084,
+        1.1150895000318997
+      ],
+      "median_seconds": 1.1150895000318997,
+      "sentences": 14000,
+      "response_bytes": 5110093
+    },
+    {
+      "pages": 500,
+      "pdf_bytes": 4391788,
+      "seconds": [
+        2.8656212000059895,
+        2.884048200037796,
+        2.8665462999488227
+      ],
+      "median_seconds": 2.8665462999488227,
+      "sentences": 35000,
+      "response_bytes": 12820693
+    }
+  ],
+  "study": {
+    "filename": "estudo-sintetico.pdf",
+    "total_frases": 15,
+    "total_frases_originais": 16,
+    "texto_limpo": "1. Introdução\n\nO estudo científico organiza evidências. Esta é a segunda frase do primeiro parágrafo.\n\nEste é outro parágrafo. Ele precisa aparecer separado na plataforma.\n\n2. Metodologia\n\nO Prof. Silva consultou a p. 25 e comparou 3,14 com 2.5.\n\nResultado importante em negrito\n\nAmostra: 25%. Custo: R$ 1.250,50. Data: 21/10/2026.\n\nReferências\n\nhttps://universidade.example/artigo",
+    "sentences": [
+      "1. Introdução",
+      "O estudo científico organiza evidências.",
+      "Esta é a segunda frase do primeiro parágrafo.",
+      "Este é outro parágrafo.",
+      "Ele precisa aparecer separado na plataforma.",
+      "2. Metodologia",
+      "O Prof.",
+      "Silva consultou a p.",
+      "25 e comparou 3,14 com 2.5.",
+      "Resultado importante em negrito",
+      "Amostra: 25%.",
+      "Custo: R$ 1.250,50.",
+      "Data: 21/10/2026.",
+      "Referências",
+      "example/artigo"
+    ],
+    "sentences_original": [
+      "1. Introdução",
+      "O estudo científico organiza evidências.",
+      "Esta é a segunda frase do primeiro parágrafo.",
+      "Este é outro parágrafo.",
+      "Ele precisa aparecer separado na plataforma.",
+      "2. Metodologia",
+      "O Prof.",
+      "Silva consultou a p.",
+      "25 e comparou 3,14 com 2.5.",
+      "Resultado importante em negrito",
+      "Amostra: 25%.",
+      "Custo: R$ 1.250,50.",
+      "Data: 21/10/2026.",
+      "Referências",
+      "https://universidade.",
+      "example/artigo"
+    ],
+    "classificacoes_conteudo": [
+      {
+        "texto": "1. Introdução",
+        "pagina": 0,
+        "tipo": "NORMAL",
+        "score": 1,
+        "sinais": [
+          {
+            "codigo": "curto_e_visualmente_separado",
+            "pontos": 1
+          }
+        ],
+        "ignorar": false
+      },
+      {
+        "texto": "O estudo científico organiza evidências.",
+        "pagina": 0,
+        "tipo": "NORMAL",
+        "score": 0,
+        "sinais": [],
+        "ignorar": false
+      },
+      {
+        "texto": "Esta é a segunda frase do primeiro parágrafo.",
+        "pagina": 0,
+        "tipo": "NORMAL",
+        "score": 0,
+        "sinais": [],
+        "ignorar": false
+      },
+      {
+        "texto": "Este é outro parágrafo.",
+        "pagina": 0,
+        "tipo": "NORMAL",
+        "score": 0,
+        "sinais": [],
+        "ignorar": false
+      },
+      {
+        "texto": "Ele precisa aparecer separado na plataforma.",
+        "pagina": 0,
+        "tipo": "NORMAL",
+        "score": 0,
+        "sinais": [],
+        "ignorar": false
+      },
+      {
+        "texto": "2. Metodologia",
+        "pagina": 0,
+        "tipo": "NORMAL",
+        "score": 1,
+        "sinais": [
+          {
+            "codigo": "curto_e_visualmente_separado",
+            "pontos": 1
+          }
+        ],
+        "ignorar": false
+      },
+      {
+        "texto": "O Prof.",
+        "pagina": 0,
+        "tipo": "NORMAL",
+        "score": 0,
+        "sinais": [],
+        "ignorar": false
+      },
+      {
+        "texto": "Silva consultou a p.",
+        "pagina": 0,
+        "tipo": "NORMAL",
+        "score": 0,
+        "sinais": [],
+        "ignorar": false
+      },
+      {
+        "texto": "25 e comparou 3,14 com 2.5.",
+        "pagina": 0,
+        "tipo": "NORMAL",
+        "score": 0,
+        "sinais": [],
+        "ignorar": false
+      },
+      {
+        "texto": "Resultado importante em negrito",
+        "pagina": 0,
+        "tipo": "NORMAL",
+        "score": 1,
+        "sinais": [
+          {
+            "codigo": "curto_e_visualmente_separado",
+            "pontos": 1
+          }
+        ],
+        "ignorar": false
+      },
+      {
+        "texto": "Amostra: 25%.",
+        "pagina": 0,
+        "tipo": "NORMAL",
+        "score": 0,
+        "sinais": [],
+        "ignorar": false
+      },
+      {
+        "texto": "Custo: R$ 1.250,50.",
+        "pagina": 0,
+        "tipo": "NORMAL",
+        "score": 0,
+        "sinais": [],
+        "ignorar": false
+      },
+      {
+        "texto": "Data: 21/10/2026.",
+        "pagina": 0,
+        "tipo": "NORMAL",
+        "score": 0,
+        "sinais": [],
+        "ignorar": false
+      },
+      {
+        "texto": "Referências",
+        "pagina": 0,
+        "tipo": "NORMAL",
+        "score": 1,
+        "sinais": [
+          {
+            "codigo": "curto_e_visualmente_separado",
+            "pontos": 1
+          }
+        ],
+        "ignorar": false
+      },
+      {
+        "texto": "https://universidade.",
+        "pagina": 0,
+        "tipo": "URL",
+        "score": 2,
+        "sinais": [
+          {
+            "codigo": "url_explicita",
+            "pontos": 2
+          }
+        ],
+        "ignorar": true
+      },
+      {
+        "texto": "example/artigo",
+        "pagina": 0,
+        "tipo": "NORMAL",
+        "score": 0,
+        "sinais": [],
+        "ignorar": false
+      }
+    ],
+    "estrutura": [
+      {
+        "tipo": "titulo",
+        "texto": "1. Introdução",
+        "pagina": 0,
+        "x": 55.0,
+        "y": 45.73999786376953,
+        "trechos": [
+          {
+            "texto": "1. Introdução",
+            "fonte": "Helvetica-Bold",
+            "tamanho": 18.0,
+            "negrito": true,
+            "italico": false
+          }
+        ]
+      },
+      {
+        "tipo": "paragrafo",
+        "texto": "O estudo científico organiza evidências. Esta é a segunda frase do primeiro parágrafo.",
+        "pagina": 0,
+        "x": 55.0,
+        "y": 98.17500305175781,
+        "trechos": [
+          {
+            "texto": "O estudo científico organiza evidências. Esta é a segunda frase do primeiro parágrafo.",
+            "fonte": "Helvetica",
+            "tamanho": 11.0,
+            "negrito": false,
+            "italico": false
+          }
+        ]
+      },
+      {
+        "tipo": "paragrafo",
+        "texto": "Este é outro parágrafo. Ele precisa aparecer separado na plataforma.",
+        "pagina": 0,
+        "x": 55.0,
+        "y": 138.1750030517578,
+        "trechos": [
+          {
+            "texto": "Este é outro parágrafo. Ele precisa aparecer separado na plataforma.",
+            "fonte": "Helvetica",
+            "tamanho": 11.0,
+            "negrito": false,
+            "italico": false
+          }
+        ]
+      },
+      {
+        "tipo": "titulo",
+        "texto": "2. Metodologia",
+        "pagina": 0,
+        "x": 55.0,
+        "y": 181.80999755859375,
+        "trechos": [
+          {
+            "texto": "2. Metodologia",
+            "fonte": "Helvetica-Bold",
+            "tamanho": 17.0,
+            "negrito": true,
+            "italico": false
+          }
+        ]
+      },
+      {
+        "tipo": "paragrafo",
+        "texto": "O Prof. Silva consultou a p. 25 e comparou 3,14 com 2.5.",
+        "pagina": 0,
+        "x": 55.0,
+        "y": 228.1750030517578,
+        "trechos": [
+          {
+            "texto": "O Prof. Silva consultou a p. 25 e comparou 3,14 com 2.5.",
+            "fonte": "Helvetica",
+            "tamanho": 11.0,
+            "negrito": false,
+            "italico": false
+          }
+        ]
+      },
+      {
+        "tipo": "paragrafo",
+        "texto": "Resultado importante em negrito",
+        "pagina": 0,
+        "x": 55.0,
+        "y": 268.2300109863281,
+        "trechos": [
+          {
+            "texto": "Resultado importante em negrito",
+            "fonte": "Helvetica-Bold",
+            "tamanho": 11.0,
+            "negrito": true,
+            "italico": false
+          }
+        ]
+      },
+      {
+        "tipo": "paragrafo",
+        "texto": "Amostra: 25%. Custo: R$ 1.250,50. Data: 21/10/2026.",
+        "pagina": 0,
+        "x": 55.0,
+        "y": 308.17498779296875,
+        "trechos": [
+          {
+            "texto": "Amostra: 25%. Custo: R$ 1.250,50. Data: 21/10/2026.",
+            "fonte": "Helvetica",
+            "tamanho": 11.0,
+            "negrito": false,
+            "italico": false
+          }
+        ]
+      },
+      {
+        "tipo": "titulo",
+        "texto": "Referências",
+        "pagina": 0,
+        "x": 55.0,
+        "y": 346.80999755859375,
+        "trechos": [
+          {
+            "texto": "Referências",
+            "fonte": "Helvetica-Bold",
+            "tamanho": 17.0,
+            "negrito": true,
+            "italico": false
+          }
+        ]
+      },
+      {
+        "tipo": "paragrafo",
+        "texto": "https://universidade.example/artigo",
+        "pagina": 0,
+        "x": 55.0,
+        "y": 393.17498779296875,
+        "trechos": [
+          {
+            "texto": "https://universidade.example/artigo",
+            "fonte": "Helvetica",
+            "tamanho": 11.0,
+            "negrito": false,
+            "italico": false
+          }
+        ]
+      }
+    ]
+  }
+}

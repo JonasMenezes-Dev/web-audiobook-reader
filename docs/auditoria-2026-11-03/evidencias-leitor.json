@@ -1,0 +1,41 @@
+{
+  "abbreviations": [
+    "O Prof.",
+    "Silva consultou a p.",
+    "25.",
+    "A Dra.",
+    "Souza concordou."
+  ],
+  "false_chapters": [
+    {
+      "index": 0,
+      "title": "25 e comparou 3,14 com 2.5."
+    },
+    {
+      "index": 1,
+      "title": "1. Introdução"
+    }
+  ],
+  "txt_visual_transform": "Custo: um mil duzentos e cinquenta reais e cinquenta centavos. Data: 21 de outubro de 2026. Amostra: 25 por cento. Seção 1234.",
+  "speed_immediate_persistence": {
+    "selected": 1.25,
+    "saved": 1
+  },
+  "pause_resume": {
+    "utterances": [
+      {
+        "text": "Uma frase completa.",
+        "rate": 1.25
+      },
+      {
+        "text": "Uma frase completa.",
+        "rate": 1.25
+      }
+    ],
+    "index": 0
+  },
+  "play_after_completion": {
+    "playing": false,
+    "utteranceCount": 2
+  }
+}
