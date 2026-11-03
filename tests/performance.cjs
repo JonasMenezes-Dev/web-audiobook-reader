@@ -7,7 +7,7 @@ async function main(){
     const root=join(__dirname,'..');
     const server=createServer(async(req,res)=>{
         const name=req.url==='/'?'index.html':req.url.slice(1);
-        if(!['index.html','script.js','style.css','config.js','reading-preferences.js'].includes(name)) return res.writeHead(404).end();
+        if(!['index.html','script.js','style.css','config.js','reading-preferences.js','liquid-glass.js'].includes(name)) return res.writeHead(404).end();
         res.setHeader('Content-Type',(name.endsWith('.js')?'text/javascript':name.endsWith('.css')?'text/css':'text/html')+'; charset=utf-8');
         res.end(await readFile(join(root,name)));
     });

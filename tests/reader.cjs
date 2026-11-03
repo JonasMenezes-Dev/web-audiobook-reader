@@ -10,7 +10,7 @@ let browser, server, url;
 before(async () => {
     server = createServer(async (req, res) => {
         const name = req.url === '/' ? 'index.html' : req.url.slice(1);
-        if (!['index.html', 'style.css', 'script.js', 'config.js', 'reading-preferences.js'].includes(name)) {
+        if (!['index.html', 'style.css', 'script.js', 'config.js', 'reading-preferences.js', 'liquid-glass.js'].includes(name)) {
             res.writeHead(404).end();
             return;
         }
@@ -89,7 +89,8 @@ test('reader themes, continuous page and player clearance at mobile and desktop 
                 };
             });
             assert.equal(metrics.overflow, false, `${colorScheme} ${width}px overflow`);
-            assert.ok(metrics.areaBottom <= metrics.playerTop, 'scroll viewport is above the fixed player');
+            assert.ok(metrics.areaBottom >= 810, 'scroll viewport extends to bottom of screen');
+            assert.ok(metrics.playerTop < metrics.areaBottom, 'player floats over the scroll viewport');
             assert.ok(metrics.scroll > 0, 'navigation follows the selected sentence');
             assert.notEqual(metrics.activeBackground, 'rgba(0, 0, 0, 0)');
             assert.notEqual(metrics.readColor, metrics.unreadColor, 'read sentences have a distinct tone');
@@ -183,7 +184,7 @@ test('player touch targets, focus, themes and reduced motion fit the reserved sp
                     background: style.backgroundColor, overflow: el.scrollWidth > el.clientWidth };
             });
             assert.ok(metrics.left >= 0 && metrics.right <= width);
-            assert.ok(metrics.top >= metrics.areaBottom && metrics.bottom <= 812);
+            assert.ok(metrics.top < metrics.areaBottom && metrics.bottom <= 812, 'player floats over reading area');
             assert.equal(metrics.overflow, false);
             for (const button of await page.locator('.player button, #voice-select, #chapter-select, #btn-appearance, #theme-toggle').all()) {
                 const rect = await button.boundingBox();
