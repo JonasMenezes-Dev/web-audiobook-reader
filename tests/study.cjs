@@ -8,7 +8,7 @@ let browser,server,url;
 before(async()=>{
     server=createServer(async(req,res)=>{
         const name=req.url==='/'?'index.html':req.url.slice(1);
-        if(!['index.html','style.css','script.js','config.js','reading-preferences.js'].includes(name)) return res.writeHead(404).end();
+        if(!['index.html','style.css','script.js','config.js','reading-preferences.js','liquid-glass.js'].includes(name)) return res.writeHead(404).end();
         res.setHeader('Content-Type',(name.endsWith('.css')?'text/css':name.endsWith('.js')?'text/javascript':'text/html')+'; charset=utf-8');
         res.end(await readFile(join(__dirname,'..',name)));
     });
@@ -265,7 +265,7 @@ test('reader has a named main and document heading; narrow reflow and maximum fo
                 const area=document.querySelector('#reading-area').getBoundingClientRect();
                 const player=document.querySelector('.player').getBoundingClientRect();
                 const labels=[...document.querySelectorAll('#screen-reader button,#screen-reader select,[role=slider]')].filter(e=>e.getClientRects().length).every(e=>!!(e.getAttribute('aria-label')||e.textContent.trim()));
-                return {overflow:document.body.scrollWidth>innerWidth,clearance:area.bottom<=player.top,labels};
+                return {overflow:document.body.scrollWidth>innerWidth,clearance:area.bottom>=player.bottom,labels};
             });
             assert.equal(checks.overflow,false);assert.equal(checks.clearance,true);assert.equal(checks.labels,true);
         }

@@ -10,7 +10,7 @@ let browser, server, url;
 before(async () => {
     server = createServer(async (req, res) => {
         const name = req.url === '/' ? 'index.html' : req.url.slice(1);
-        if (!['index.html', 'style.css', 'script.js', 'config.js', 'reading-preferences.js'].includes(name)) {
+        if (!['index.html', 'style.css', 'script.js', 'config.js', 'reading-preferences.js', 'liquid-glass.js'].includes(name)) {
             res.writeHead(404).end();
             return;
         }

@@ -731,7 +731,9 @@ function processText(text, title, sentences, blocks = null, documentId = null) {
     renderChapterOptions();
     document.getElementById('screen-import').hidden = true;
     document.getElementById('screen-reader').hidden = false;
-    document.querySelector('.reader-header').appendChild(document.getElementById('theme-toggle'));
+    const headerActions = document.querySelector('.reader-header-actions') || document.querySelector('.reader-header');
+    headerActions.appendChild(document.getElementById('theme-toggle'));
+    if (window.updateLiquidGlass) window.updateLiquidGlass();
 
     highlight();
     updatePlaybackUI(documentId ? 'Leitura pronta. Alt e setas para cima ou baixo navegam pelos parágrafos.' :
