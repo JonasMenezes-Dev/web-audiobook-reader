@@ -1258,6 +1258,91 @@ function loadRecents() {
 }
 
 
+// Modo Bolso (OLED Blackout Mode)
+let pocketModeActive = false;
+let pocketModeFadeTimer = null;
+let lastPocketTapTime = 0;
+
+function enterPocketMode() {
+    pocketModeActive = true;
+    const overlay = document.getElementById('pocket-mode-overlay');
+    if (!overlay) return;
+
+    overlay.hidden = false;
+    overlay.setAttribute('aria-hidden', 'false');
+    document.body.classList.add('in-pocket-mode');
+
+    // Se a leitura estiver pausada, inicia automaticamente
+    if (!state.playing) {
+        togglePlay();
+    } else {
+        requestWakeLock();
+    }
+
+    // Tenta entrar em tela cheia para ocultar a barra do navegador no Android
+    try {
+        if (document.documentElement.requestFullscreen) {
+            document.documentElement.requestFullscreen().catch(() => {});
+        } else if (document.documentElement.webkitRequestFullscreen) {
+            document.documentElement.webkitRequestFullscreen();
+        }
+    } catch (_) {}
+
+    showPocketPrompt();
+}
+
+function exitPocketMode() {
+    if (!pocketModeActive) return;
+    pocketModeActive = false;
+    const overlay = document.getElementById('pocket-mode-overlay');
+    if (overlay) {
+        overlay.hidden = true;
+        overlay.setAttribute('aria-hidden', 'true');
+    }
+    document.body.classList.remove('in-pocket-mode');
+    clearTimeout(pocketModeFadeTimer);
+
+    try {
+        if (document.fullscreenElement && document.exitFullscreen) {
+            document.exitFullscreen().catch(() => {});
+        } else if (document.webkitFullscreenElement && document.webkitExitFullscreen) {
+            document.webkitExitFullscreen();
+        }
+    } catch (_) {}
+
+    scrollToActive('smooth');
+    const pocketBtn = document.getElementById('btn-pocket-mode');
+    if (pocketBtn) pocketBtn.focus();
+}
+
+function showPocketPrompt() {
+    const content = document.querySelector('.pocket-mode-content');
+    if (!content) return;
+    content.classList.remove('is-dimmed');
+    clearTimeout(pocketModeFadeTimer);
+    pocketModeFadeTimer = setTimeout(() => {
+        if (pocketModeActive) {
+            content.classList.add('is-dimmed');
+        }
+    }, 3500);
+}
+
+function handlePocketOverlayTouch(event) {
+    const now = Date.now();
+    const timeSinceLast = now - lastPocketTapTime;
+    lastPocketTapTime = now;
+
+    // Duplo clique/toque detectado (entre 10ms e 500ms)
+    if (timeSinceLast < 500 && timeSinceLast > 10) {
+        event.preventDefault();
+        exitPocketMode();
+        return;
+    }
+
+    // Toque simples: reexibe brevemente as instruções
+    showPocketPrompt();
+}
+
 function togglePlay() {
     if (state.playing) {
         state.playing = false;
@@ -1302,6 +1387,7 @@ function speak() {
         pauseBackgroundAudio();
         releaseWakeLock();
         stopSpeechKeepAlive();
+        if (pocketModeActive) showPocketPrompt();
         updatePlaybackUI('Leitura concluída. Reproduza para ouvir novamente desde o início.');
         return;
     }
@@ -1445,4 +1531,37 @@ document.getElementById('reading-area').addEventListener('keydown', event => {
     if (!target) return;
     event.preventDefault();
     jumpTo(target.segmentos.find(s => Number.isInteger(s.indice_frase)).indice_frase, true);
+});
+
+// Eventos do Modo Bolso (toque duplo para sair e atalhos)
+const pocketOverlayEl = document.getElementById('pocket-mode-overlay');
+if (pocketOverlayEl) {
+    pocketOverlayEl.addEventListener('dblclick', (e) => {
+        e.preventDefault();
+        exitPocketMode();
+    });
+    pocketOverlayEl.addEventListener('click', handlePocketOverlayTouch);
+    pocketOverlayEl.addEventListener('touchstart', (e) => {
+        const now = Date.now();
+        if (now - lastPocketTapTime < 500 && now - lastPocketTapTime > 10) {
+            e.preventDefault();
+            exitPocketMode();
+            return;
+        }
+        lastPocketTapTime = now;
+        showPocketPrompt();
+    }, { passive: false });
+}
+
+document.addEventListener('keydown', (e) => {
+    if (pocketModeActive) {
+        if (e.key === 'Escape') {
+            e.preventDefault();
+            exitPocketMode();
+        } else if (e.key === ' ' || e.code === 'Space') {
+            e.preventDefault();
+            togglePlay();
+            showPocketPrompt();
+        }
+    }
 });
