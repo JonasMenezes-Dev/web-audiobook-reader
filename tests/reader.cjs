@@ -454,3 +454,95 @@ test('merged voice, chapters and manual theme remain compatible with editorial a
     assert.equal(await page.locator('#reading-inner').evaluate(el => getComputedStyle(el).fontSize), '28px');
     await page.close();
 });
+test('background playback keeps audio anchor, wake lock and media session controls active', async () => {
+    const page = await browser.newPage();
+    await page.route('https://fonts.googleapis.com/**', route => route.abort());
+    await page.route('https://fonts.gstatic.com/**', route => route.abort());
+    await page.addInitScript(() => {
+        window.SpeechSynthesisUtterance = class { constructor(text) { this.text = text; } };
+        speechSynthesis.speak = () => {};
+        speechSynthesis.cancel = () => {};
+    });
+    await page.goto(url);
+    await page.locator('#file-input').setInputFiles({
+        name: 'Livro Em Segundo Plano.txt',
+        mimeType: 'text/plain',
+        buffer: Buffer.from('Capítulo 1\n\nPrimeira frase de áudio em segundo plano.\n\nSegunda frase do livro.')
+    });
+    await page.locator('#reading-area').waitFor({ state: 'visible' });
+
+    // Initial state: paused
+    assert.equal(await page.evaluate(() => navigator.mediaSession?.playbackState), 'paused');
+    assert.equal(await page.evaluate(() => navigator.mediaSession?.metadata?.title), 'Livro Em Segundo Plano.txt');
+
+    // Click play: backgroundAudio starts, wakeLock requested, mediaSession becomes playing
+    await page.locator('#btn-play').click();
+    assert.equal(await page.evaluate(() => state.playing), true);
+    assert.equal(await page.evaluate(() => navigator.mediaSession?.playbackState), 'playing');
+    assert.equal(await page.evaluate(() => Boolean(backgroundAudio && backgroundAudio.loop)), true);
+
+    // Simulate lockscreen Next Track action
+    await page.evaluate(() => {
+        next();
+    });
+    assert.equal(await page.evaluate(() => state.currentIdx), 1);
+    assert.equal(await page.evaluate(() => navigator.mediaSession?.playbackState), 'playing');
+
+    // Simulate lockscreen Pause action
+    await page.evaluate(() => {
+        togglePlay();
+    });
+    assert.equal(await page.evaluate(() => state.playing), false);
+    assert.equal(await page.evaluate(() => navigator.mediaSession?.playbackState), 'paused');
+    assert.equal(await page.evaluate(() => backgroundAudio.paused), true);
+
+    await page.close();
+});
+test('pocket mode activates OLED black overlay, starts narration and exits via double tap', async () => {
+    const page = await browser.newPage({
+        viewport: { width: 375, height: 812 }
+    });
+    await page.route('https://fonts.googleapis.com/**', route => route.abort());
+    await page.route('https://fonts.gstatic.com/**', route => route.abort());
+    await page.addInitScript(() => {
+        window.SpeechSynthesisUtterance = class { constructor(text) { this.text = text; } };
+        speechSynthesis.speak = () => {};
+        speechSynthesis.cancel = () => {};
+    });
+    await page.goto(url);
+    await page.locator('#file-input').setInputFiles({
+        name: 'Livro Modo Bolso.txt',
+        mimeType: 'text/plain',
+        buffer: Buffer.from('Capítulo 1\n\nPrimeira frase para ouvir no bolso com a tela preta.\n\nSegunda frase contínua.')
+    });
+    await page.locator('#reading-area').waitFor({ state: 'visible' });
+
+    // Pocket mode button is in header
+    const pocketBtn = page.locator('#btn-pocket-mode');
+    await pocketBtn.waitFor({ state: 'visible' });
+
+    // Activate pocket mode
+    await pocketBtn.click();
+
+    const overlay = page.locator('#pocket-mode-overlay');
+    assert.equal(await overlay.isVisible(), true);
+    assert.equal(await page.evaluate(() => state.playing), true);
+    assert.equal(await page.evaluate(() => pocketModeActive), true);
+
+    // Single click should not exit (pocket protection)
+    await overlay.click();
+    assert.equal(await overlay.isVisible(), true);
+
+    // Double click exits pocket mode
+    await overlay.dblclick();
+    assert.equal(await overlay.isHidden(), true);
+    assert.equal(await page.evaluate(() => pocketModeActive), false);
+
+    // Escape exits when active
+    await pocketBtn.click();
+    assert.equal(await overlay.isVisible(), true);
+    await page.keyboard.press('Escape');
+    assert.equal(await overlay.isHidden(), true);
+
+    await page.close();
+});

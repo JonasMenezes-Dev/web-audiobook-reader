@@ -84,6 +84,7 @@
                         <span id="pos-txt" class="pos-txt" aria-label="Progresso da leitura">0 / 0</span>
                     </div>
                 </div>
+                <button type="button" id="btn-pocket-mode" class="pocket-mode-btn" onclick="enterPocketMode()" aria-label="Ativar Modo Bolso para ouvir com economia de tela" title="Modo Bolso (OLED)"><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M7 3h10a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2Z" stroke="currentColor" stroke-width="1.6"/><path d="M5 10c0 3.8 3.2 6.8 7 6.8s7-3 7-6.8" stroke="currentColor" stroke-width="1.6"/></svg><span class="pocket-text">Bolso</span></button>
             </div>
 
             <div class="reader-header-actions" role="toolbar" aria-label="Ajustes e controles da leitura">
@@ -157,6 +158,20 @@
         </footer>
         <p id="playback-status" class="playback-status sr-only" role="status" aria-live="polite"></p>
     </main>
+<div id="pocket-mode-overlay" class="pocket-mode-overlay" hidden aria-hidden="true" role="dialog" aria-modal="true" aria-label="Modo Bolso ativo">
+        <div class="pocket-mode-content">
+            <div class="pocket-mode-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none">
+                    <path d="M7 3h10a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2Z" stroke="currentColor" stroke-width="1.6"/>
+                    <path d="M5 10c0 3.8 3.2 6.8 7 6.8s7-3 7-6.8" stroke="currentColor" stroke-width="1.6"/>
+                </svg>
+            </div>
+            <h2 class="pocket-mode-title">Modo Bolso Ativo</h2>
+            <p class="pocket-mode-hint">Tela preta com economia OLED.<br><strong>Toque duas vezes</strong> para sair.</p>
+            <button type="button" id="pocket-mode-exit-btn" class="pocket-mode-exit-btn" onclick="exitPocketMode()">Sair do Modo Bolso</button>
+        </div>
+    </div>
+
     <script src="config.js"></script>
     <script src="script.js"></script>
     <script src="reading-preferences.js"></script>

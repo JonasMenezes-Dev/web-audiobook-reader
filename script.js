@@ -63,6 +63,7 @@ const SPEEDS = [1.0, 1.25, 1.5, 2.0, 0.7];
 // A geração invalida callbacks obsoletos: só quem a criou pode reagir.
 let speechGeneration = 0;
 let speechPauseTimer = null;
+let activeUtterance = null;
 let pendingDocumentId = null;
 let requestedResumeId = null;
 let activeImport = null;
@@ -70,6 +71,188 @@ let importGeneration = 0;
 let fileSelectionGeneration = 0;
 let sentenceElements = [];
 let lastHighlightedIndex = -1;
+
+// Âncora de áudio em segundo plano (evita suspensão pelo sistema no celular com tela desligada)
+let backgroundAudio = null;
+let wakeLock = null;
+let speechKeepAliveInterval = null;
+
+function ensureBackgroundAudio() {
+    if (backgroundAudio) return backgroundAudio;
+    try {
+        const sampleRate = 8000;
+        const numSamples = 8000; // 1 segundo
+        const buffer = new ArrayBuffer(44 + numSamples);
+        const view = new DataView(buffer);
+        const writeStr = (off, s) => { for (let i = 0; i < s.length; i++) view.setUint8(off + i, s.charCodeAt(i)); };
+        writeStr(0, 'RIFF');
+        view.setUint32(4, 36 + numSamples, true);
+        writeStr(8, 'WAVE');
+        writeStr(12, 'fmt ');
+        view.setUint32(16, 16, true);
+        view.setUint16(20, 1, true); // PCM
+        view.setUint16(22, 1, true); // mono
+        view.setUint32(24, sampleRate, true);
+        view.setUint32(28, sampleRate, true);
+        view.setUint16(32, 1, true);
+        view.setUint16(34, 8, true);
+        writeStr(36, 'data');
+        view.setUint32(40, numSamples, true);
+        new Uint8Array(buffer, 44, numSamples).fill(128); // Silêncio PCM 8-bit
+        const blob = new Blob([buffer], { type: 'audio/wav' });
+        const url = URL.createObjectURL(blob);
+        backgroundAudio = new Audio(url);
+        backgroundAudio.loop = true;
+        backgroundAudio.volume = 0.05;
+    } catch (err) {
+        log('[AudioAnchor] Áudio de fundo indisponível:', err);
+    }
+    return backgroundAudio;
+}
+
+function playBackgroundAudio() {
+    const audio = ensureBackgroundAudio();
+    if (audio && audio.paused) {
+        audio.play().catch(e => {
+            log('[AudioAnchor] Reprodução impedida:', e);
+        });
+    }
+}
+
+function pauseBackgroundAudio() {
+    if (backgroundAudio && !backgroundAudio.paused) {
+        try {
+            backgroundAudio.pause();
+        } catch (_) {}
+    }
+}
+
+async function requestWakeLock() {
+    if (!('wakeLock' in navigator) || !state.playing || wakeLock) return;
+    try {
+        wakeLock = await navigator.wakeLock.request('screen');
+        wakeLock.addEventListener('release', () => {
+            wakeLock = null;
+        });
+    } catch (_) {}
+}
+
+function releaseWakeLock() {
+    if (wakeLock) {
+        try {
+            wakeLock.release().catch(() => {});
+        } catch (_) {}
+        wakeLock = null;
+    }
+}
+
+function startSpeechKeepAlive() {
+    if (speechKeepAliveInterval) return;
+    speechKeepAliveInterval = setInterval(() => {
+        if (!state.playing) {
+            stopSpeechKeepAlive();
+            return;
+        }
+        if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+            if (window.speechSynthesis.paused) {
+                try { window.speechSynthesis.resume(); } catch (_) {}
+            }
+        }
+    }, 5000);
+}
+
+function stopSpeechKeepAlive() {
+    if (speechKeepAliveInterval) {
+        clearInterval(speechKeepAliveInterval);
+        speechKeepAliveInterval = null;
+    }
+}
+
+function getCurrentChapterTitle() {
+    if (!state.chapters || !state.chapters.length) return '';
+    let active = state.chapters[0];
+    for (const chapter of state.chapters) {
+        if (chapter.index > state.currentIdx) break;
+        active = chapter;
+    }
+    return active ? (active.title || '') : '';
+}
+
+function initMediaSession() {
+    if (typeof navigator === 'undefined' || !('mediaSession' in navigator)) return;
+
+    if ('audioSession' in navigator) {
+        try {
+            navigator.audioSession.type = 'playback';
+        } catch (_) {}
+    }
+
+    const handlers = [
+        ['play', () => { if (!state.playing) togglePlay(); }],
+        ['pause', () => { if (state.playing) togglePlay(); }],
+        ['previoustrack', () => { prev(); }],
+        ['nexttrack', () => { next(); }],
+        ['seekforward', () => { next(); }],
+        ['seekbackward', () => { prev(); }],
+        ['seekto', (details) => {
+            if (details && Number.isFinite(details.seekTime) && state.sentences.length > 0) {
+                const target = Math.max(0, Math.min(state.sentences.length - 1, Math.round(details.seekTime)));
+                jumpTo(target, true);
+            }
+        }],
+        ['stop', () => {
+            if (state.playing) togglePlay();
+        }]
+    ];
+
+    handlers.forEach(([action, handler]) => {
+        try {
+            navigator.mediaSession.setActionHandler(action, handler);
+        } catch (_) {}
+    });
+}
+
+function updateMediaSession() {
+    if (typeof navigator === 'undefined' || !('mediaSession' in navigator)) return;
+
+    if (!state.title && state.sentences.length === 0) {
+        navigator.mediaSession.playbackState = 'none';
+        return;
+    }
+
+    navigator.mediaSession.playbackState = state.playing ? 'playing' : 'paused';
+
+    const currentChapter = getCurrentChapterTitle();
+    const progressText = state.sentences.length > 0
+        ? `Frase ${Math.min(state.currentIdx + 1, state.sentences.length)} de ${state.sentences.length}`
+        : '';
+    const albumText = currentChapter ? `${currentChapter} · ${progressText}` : progressText;
+
+    try {
+        navigator.mediaSession.metadata = new MediaMetadata({
+            title: state.title || 'AudioLivro Pro',
+            artist: 'AudioLivro Pro',
+            album: albumText,
+            artwork: [
+                {
+                    src: 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512"><rect width="512" height="512" rx="100" fill="%2324211e"/><path d="M256 150c-55-40-120-40-165-30v250c45-10 110-10 165 30 55-40 120-40 165-30V120c-45-10-110-10-165 30z" fill="none" stroke="%23c48b5e" stroke-width="24" stroke-linecap="round" stroke-linejoin="round"/><line x1="256" y1="150" x2="256" y2="400" stroke="%23c48b5e" stroke-width="24"/></svg>',
+                    sizes: '512x512',
+                    type: 'image/svg+xml'
+                }
+            ]
+        });
+    } catch (_) {}
+
+    if ('setPositionState' in navigator.mediaSession && state.sentences.length > 0) {
+        try {
+            navigator.mediaSession.setPositionState({
+                duration: Math.max(1, state.sentences.length),
+                playbackRate: state.rate || 1.0,
+                position: Math.max(0, Math.min(state.currentIdx, state.sentences.length))
+            });
+        } catch (_) {}
+    }
+}
 
 let state = {
     title: '',
@@ -190,16 +373,28 @@ if (voiceSelect) {
     });
 }
 
-// Carregar lista inicial
-window.onload = loadRecents;
+// Carregar lista inicial e inicializar MediaSession
+window.addEventListener('DOMContentLoaded', () => {
+    initMediaSession();
+    loadRecents();
+});
+window.onload = () => {
+    initMediaSession();
+    loadRecents();
+};
 
 // Ao retomar um livro recente, o navegador pede o arquivo original; o conteúdo não é armazenado.
 let requestedResumeTitle = '';
 
-// Salva novamente quando a página vai para segundo plano ou é fechada.
+// Salva novamente quando a página vai para segundo plano ou é fechada; restaura foco e rolagem ao retornar.
 window.addEventListener('pagehide', saveProgress);
 document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'hidden') saveProgress();
+    if (document.visibilityState === 'hidden') {
+        saveProgress();
+    } else if (document.visibilityState === 'visible' && state.playing) {
+        requestWakeLock();
+        scrollToActive('smooth');
+    }
 });
 
 // Gerenciador de arquivos
@@ -648,6 +843,9 @@ function splitIntoSentences(text) {
 function processText(text, title, sentences, blocks = null, documentId = null) {
     cancelSpeech();
     state.playing = false;
+    pauseBackgroundAudio();
+    releaseWakeLock();
+    stopSpeechKeepAlive();
     state.title = title;
     state.documentId = documentId;
     state.storageAvailable = null;
@@ -901,7 +1099,7 @@ function highlight(scroll = true, instant = false) {
 
     if (active) {
         active.classList.add('reading');
-        if (scroll) {
+        if (scroll && !document.hidden) {
             instant = instant || window.matchMedia('(prefers-reduced-motion: reduce)').matches;
             scrollToActive(instant ? 'auto' : 'smooth');
         }
@@ -918,6 +1116,7 @@ function highlight(scroll = true, instant = false) {
     const page = state.sentenceBlocks[state.currentIdx]?.pagina;
     if (source) source.textContent = Number.isInteger(page) ? `PDF · p. ${page + 1}` : 'Texto';
     saveProgress();
+    updateMediaSession();
 }
 
 
@@ -1059,9 +1258,97 @@ function loadRecents() {
 }
 
 
+// Modo Bolso (OLED Blackout Mode)
+let pocketModeActive = false;
+let pocketModeFadeTimer = null;
+let lastPocketTapTime = 0;
+
+function enterPocketMode() {
+    pocketModeActive = true;
+    const overlay = document.getElementById('pocket-mode-overlay');
+    if (!overlay) return;
+
+    overlay.hidden = false;
+    overlay.setAttribute('aria-hidden', 'false');
+    document.body.classList.add('in-pocket-mode');
+
+    // Se a leitura estiver pausada, inicia automaticamente
+    if (!state.playing) {
+        togglePlay();
+    } else {
+        requestWakeLock();
+    }
+
+    // Tenta entrar em tela cheia para ocultar a barra do navegador no Android
+    try {
+        if (document.documentElement.requestFullscreen) {
+            document.documentElement.requestFullscreen().catch(() => {});
+        } else if (document.documentElement.webkitRequestFullscreen) {
+            document.documentElement.webkitRequestFullscreen();
+        }
+    } catch (_) {}
+
+    showPocketPrompt();
+}
+
+function exitPocketMode() {
+    if (!pocketModeActive) return;
+    pocketModeActive = false;
+    const overlay = document.getElementById('pocket-mode-overlay');
+    if (overlay) {
+        overlay.hidden = true;
+        overlay.setAttribute('aria-hidden', 'true');
+    }
+    document.body.classList.remove('in-pocket-mode');
+    clearTimeout(pocketModeFadeTimer);
+
+    try {
+        if (document.fullscreenElement && document.exitFullscreen) {
+            document.exitFullscreen().catch(() => {});
+        } else if (document.webkitFullscreenElement && document.webkitExitFullscreen) {
+            document.webkitExitFullscreen();
+        }
+    } catch (_) {}
+
+    scrollToActive('smooth');
+    const pocketBtn = document.getElementById('btn-pocket-mode');
+    if (pocketBtn) pocketBtn.focus();
+}
+
+function showPocketPrompt() {
+    const content = document.querySelector('.pocket-mode-content');
+    if (!content) return;
+    content.classList.remove('is-dimmed');
+    clearTimeout(pocketModeFadeTimer);
+    pocketModeFadeTimer = setTimeout(() => {
+        if (pocketModeActive) {
+            content.classList.add('is-dimmed');
+        }
+    }, 3500);
+}
+
+function handlePocketOverlayTouch(event) {
+    const now = Date.now();
+    const timeSinceLast = now - lastPocketTapTime;
+    lastPocketTapTime = now;
+
+    // Duplo clique/toque detectado (entre 10ms e 500ms)
+    if (timeSinceLast < 500 && timeSinceLast > 10) {
+        event.preventDefault();
+        exitPocketMode();
+        return;
+    }
+
+    // Toque simples: reexibe brevemente as instruções
+    showPocketPrompt();
+}
+
 function togglePlay() {
     if (state.playing) {
         state.playing = false;
+        pauseBackgroundAudio();
+        releaseWakeLock();
+        stopSpeechKeepAlive();
         cancelSpeech(false);
         updatePlaybackUI(state.boundaryKnown ? 'Pausado. A retomada começa na última palavra acompanhada.' :
             'Pausado. Esta voz não informou a posição das palavras; ao retomar, a frase atual será reiniciada.');
@@ -1073,6 +1360,9 @@ function togglePlay() {
             highlight(true, true);
         }
         state.playing = true;
+        playBackgroundAudio();
+        requestWakeLock();
+        startSpeechKeepAlive();
         updatePlaybackUI('Reproduzindo.');
         speak();
     }
@@ -1087,23 +1377,28 @@ function updatePlaybackUI(message = '') {
     const status = document.getElementById('playback-status');
     if (status && message) status.textContent = message +
         (state.storageAvailable === false && !/progresso/i.test(message) ? ' O progresso não pôde ser salvo neste navegador.' : '');
+    updateMediaSession();
 }
 
 function speak() {
     if (state.currentIdx >= state.sentences.length) {
         // Fim do livro: encerra a reprodução.
         state.playing = false;
+        pauseBackgroundAudio();
+        releaseWakeLock();
+        stopSpeechKeepAlive();
+        if (pocketModeActive) showPocketPrompt();
         updatePlaybackUI('Leitura concluída. Reproduza para ouvir novamente desde o início.');
         return;
     }
     if (!state.playing) return;
 
-    // Nova instância por fala: evita que eventos de falas canceladas
-    // reatribuam os handlers da fala corrente (causa do travamento).
+    // Nova instância por fala mantida em activeUtterance para evitar descarte prematuro por garbage collection.
     const generation = ++speechGeneration;
     const normalized = normalizeText(state.sentences[state.currentIdx]);
     const offset = state.speechOffset < normalized.length ? state.speechOffset : 0;
     const utter = new SpeechSynthesisUtterance(normalized.slice(offset));
+    activeUtterance = utter;
     utter.voice = getBestVoice(); // Escolhe a voz mais humana disponível
     utter.rate = state.rate;      // Respeita exatamente a velocidade escolhida
     utter.pitch = 1.0;            // Ajuste entre 0.8 e 1.2 para mudar o tom
@@ -1119,6 +1414,7 @@ function speak() {
     };
 
     utter.onend = () => {
+        if (activeUtterance === utter) activeUtterance = null;
         if (generation !== speechGeneration || !state.playing) return;
         const previousBlock = state.sentenceBlocks[state.currentIdx];
         speechGeneration++; // O mesmo evento de fim não pode avançar duas vezes durante a pausa.
@@ -1129,7 +1425,7 @@ function speak() {
         const nextBlock = state.sentenceBlocks[state.currentIdx];
         if (nextBlock && previousBlock !== nextBlock) {
             const nextGeneration = speechGeneration;
-            const delay = (previousBlock?.tipo === 'titulo' ? 320 : 220) / state.rate;
+            const delay = (document.hidden ? 40 : (previousBlock?.tipo === 'titulo' ? 320 : 220)) / state.rate;
             speechPauseTimer = setTimeout(() => {
                 speechPauseTimer = null;
                 if (nextGeneration === speechGeneration && state.playing) speak();
@@ -1138,23 +1434,44 @@ function speak() {
     };
 
     utter.onerror = (e) => {
+        if (activeUtterance === utter) activeUtterance = null;
         // 'interrupted'/'canceled' são esperados ao pausar/saltar: ignorar.
         if (generation !== speechGeneration) return;
         if (e.error === 'interrupted' || e.error === 'canceled') return;
         console.error("Erro na síntese:", e);
         state.playing = false;
+        pauseBackgroundAudio();
+        releaseWakeLock();
+        stopSpeechKeepAlive();
         updatePlaybackUI('A voz não conseguiu continuar. Tente reproduzir novamente ou selecione outra voz.');
     };
+
+    try {
+        if (typeof window.speechSynthesis.resume === 'function' && window.speechSynthesis.paused) {
+            window.speechSynthesis.resume();
+        }
+    } catch (_) {}
 
     window.speechSynthesis.speak(utter);
 }
 
-// Interrompe a fala atual invalidando os callbacks pendentes.
+// Interrompe a fala atual invalidando os callbacks pendentes e silenciando o áudio imediatamente.
 function cancelSpeech(resetPosition = true) {
     speechGeneration++;
     clearTimeout(speechPauseTimer);
     speechPauseTimer = null;
-    window.speechSynthesis.cancel();
+    try {
+        if (typeof window.speechSynthesis.pause === 'function' && window.speechSynthesis.speaking) {
+            window.speechSynthesis.pause();
+        }
+        window.speechSynthesis.cancel();
+        if (typeof window.speechSynthesis.resume === 'function' && window.speechSynthesis.paused) {
+            window.speechSynthesis.resume();
+        }
+    } catch (_) {
+        try { window.speechSynthesis.cancel(); } catch (_) {}
+    }
+    activeUtterance = null;
     if (resetPosition) {
         state.speechOffset = 0;
         state.boundaryKnown = false;
@@ -1214,4 +1531,37 @@ document.getElementById('reading-area').addEventListener('keydown', event => {
     if (!target) return;
     event.preventDefault();
     jumpTo(target.segmentos.find(s => Number.isInteger(s.indice_frase)).indice_frase, true);
+});
+
+// Eventos do Modo Bolso (toque duplo para sair e atalhos)
+const pocketOverlayEl = document.getElementById('pocket-mode-overlay');
+if (pocketOverlayEl) {
+    pocketOverlayEl.addEventListener('dblclick', (e) => {
+        e.preventDefault();
+        exitPocketMode();
+    });
+    pocketOverlayEl.addEventListener('click', handlePocketOverlayTouch);
+    pocketOverlayEl.addEventListener('touchstart', (e) => {
+        const now = Date.now();
+        if (now - lastPocketTapTime < 500 && now - lastPocketTapTime > 10) {
+            e.preventDefault();
+            exitPocketMode();
+            return;
+        }
+        lastPocketTapTime = now;
+        showPocketPrompt();
+    }, { passive: false });
+}
+
+document.addEventListener('keydown', (e) => {
+    if (pocketModeActive) {
+        if (e.key === 'Escape') {
+            e.preventDefault();
+            exitPocketMode();
+        } else if (e.key === ' ' || e.code === 'Space') {
+            e.preventDefault();
+            togglePlay();
+            showPocketPrompt();
+        }
+    }
 });

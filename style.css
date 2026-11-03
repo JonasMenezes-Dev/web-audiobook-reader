@@ -1018,3 +1018,146 @@ body[aria-busy="true"] .player { opacity: 0.5; }
         transition: none;
     }
 }
+
+/* Botão e Overlay do Modo Bolso */
+#btn-pocket-mode {
+    min-width: 44px;
+    min-height: 44px;
+    height: 44px;
+    padding: 0 12px;
+    border: 1px solid var(--reader-rule);
+    border-radius: 9999px;
+    background: var(--reader-paper);
+    color: var(--reader-copper);
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font: 500 12px var(--font-ui);
+    cursor: pointer;
+    flex-shrink: 0;
+    transition: background-color 140ms ease, border-color 140ms ease, transform 120ms ease;
+}
+
+#btn-pocket-mode svg {
+    width: 18px;
+    height: 18px;
+    flex-shrink: 0;
+}
+
+#btn-pocket-mode:hover {
+    background: var(--reader-hover);
+    border-color: var(--reader-copper);
+}
+
+#btn-pocket-mode:focus-visible {
+    outline: 2px solid var(--reader-copper);
+    outline-offset: 2px;
+}
+
+@media (max-width: 680px) {
+    #btn-pocket-mode {
+        padding: 0;
+        width: 44px;
+        min-width: 44px;
+        justify-content: center;
+    }
+    #btn-pocket-mode .pocket-text {
+        display: none;
+    }
+}
+
+.pocket-mode-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 99999;
+    background: #000000;
+    color: #e6dfd5;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    padding: 24px;
+    touch-action: manipulation;
+    user-select: none;
+    -webkit-user-select: none;
+}
+
+.pocket-mode-overlay[hidden] {
+    display: none !important;
+}
+
+.pocket-mode-content {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    max-width: 340px;
+    gap: 16px;
+    transition: opacity 600ms ease;
+    opacity: 0.9;
+}
+
+.pocket-mode-content.is-dimmed {
+    opacity: 0;
+    pointer-events: none;
+}
+
+.pocket-mode-icon {
+    width: 64px;
+    height: 64px;
+    border-radius: 50%;
+    background: rgba(199, 119, 71, 0.12);
+    border: 1px solid rgba(199, 119, 71, 0.3);
+    color: #c77747;
+    display: grid;
+    place-items: center;
+}
+
+.pocket-mode-icon svg {
+    width: 32px;
+    height: 32px;
+}
+
+.pocket-mode-title {
+    font-family: var(--font-read);
+    font-size: 22px;
+    color: #f7f1e7;
+    letter-spacing: -0.01em;
+}
+
+.pocket-mode-hint {
+    font-family: var(--font-ui);
+    font-size: 14px;
+    line-height: 1.5;
+    color: #9c9184;
+}
+
+.pocket-mode-hint strong {
+    color: #e0986e;
+    font-weight: 500;
+}
+
+.pocket-mode-exit-btn {
+    margin-top: 12px;
+    padding: 12px 28px;
+    border-radius: 9999px;
+    border: 1px solid rgba(199, 119, 71, 0.4);
+    background: rgba(199, 119, 71, 0.16);
+    color: #f7f1e7;
+    font-family: var(--font-ui);
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    touch-action: manipulation;
+    transition: background 140ms ease, transform 120ms ease;
+}
+
+.pocket-mode-exit-btn:hover {
+    background: rgba(199, 119, 71, 0.28);
+    transform: scale(1.02);
+}
+
+.pocket-mode-exit-btn:active {
+    transform: scale(0.98);
+}
