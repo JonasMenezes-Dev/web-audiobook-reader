@@ -63,6 +63,7 @@ const SPEEDS = [1.0, 1.25, 1.5, 2.0, 0.7];
 // A geração invalida callbacks obsoletos: só quem a criou pode reagir.
 let speechGeneration = 0;
 let speechPauseTimer = null;
+let activeUtterance = null;
 let pendingDocumentId = null;
 let requestedResumeId = null;
 let activeImport = null;
@@ -1098,12 +1099,12 @@ function speak() {
     }
     if (!state.playing) return;
 
-    // Nova instância por fala: evita que eventos de falas canceladas
-    // reatribuam os handlers da fala corrente (causa do travamento).
+    // Nova instância por fala mantida em activeUtterance para evitar descarte prematuro por garbage collection.
     const generation = ++speechGeneration;
     const normalized = normalizeText(state.sentences[state.currentIdx]);
     const offset = state.speechOffset < normalized.length ? state.speechOffset : 0;
     const utter = new SpeechSynthesisUtterance(normalized.slice(offset));
+    activeUtterance = utter;
     utter.voice = getBestVoice(); // Escolhe a voz mais humana disponível
     utter.rate = state.rate;      // Respeita exatamente a velocidade escolhida
     utter.pitch = 1.0;            // Ajuste entre 0.8 e 1.2 para mudar o tom
@@ -1119,6 +1120,7 @@ function speak() {
     };
 
     utter.onend = () => {
+        if (activeUtterance === utter) activeUtterance = null;
         if (generation !== speechGeneration || !state.playing) return;
         const previousBlock = state.sentenceBlocks[state.currentIdx];
         speechGeneration++; // O mesmo evento de fim não pode avançar duas vezes durante a pausa.
@@ -1138,6 +1140,7 @@ function speak() {
     };
 
     utter.onerror = (e) => {
+        if (activeUtterance === utter) activeUtterance = null;
         // 'interrupted'/'canceled' são esperados ao pausar/saltar: ignorar.
         if (generation !== speechGeneration) return;
         if (e.error === 'interrupted' || e.error === 'canceled') return;
@@ -1146,15 +1149,32 @@ function speak() {
         updatePlaybackUI('A voz não conseguiu continuar. Tente reproduzir novamente ou selecione outra voz.');
     };
 
+    try {
+        if (typeof window.speechSynthesis.resume === 'function' && window.speechSynthesis.paused) {
+            window.speechSynthesis.resume();
+        }
+    } catch (_) {}
+
     window.speechSynthesis.speak(utter);
 }
 
-// Interrompe a fala atual invalidando os callbacks pendentes.
+// Interrompe a fala atual invalidando os callbacks pendentes e silenciando o áudio imediatamente.
 function cancelSpeech(resetPosition = true) {
     speechGeneration++;
     clearTimeout(speechPauseTimer);
     speechPauseTimer = null;
-    window.speechSynthesis.cancel();
+    try {
+        if (typeof window.speechSynthesis.pause === 'function' && window.speechSynthesis.speaking) {
+            window.speechSynthesis.pause();
+        }
+        window.speechSynthesis.cancel();
+        if (typeof window.speechSynthesis.resume === 'function' && window.speechSynthesis.paused) {
+            window.speechSynthesis.resume();
+        }
+    } catch (_) {
+        try { window.speechSynthesis.cancel(); } catch (_) {}
+    }
+    activeUtterance = null;
     if (resetPosition) {
         state.speechOffset = 0;
         state.boundaryKnown = false;
