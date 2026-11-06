@@ -14,6 +14,7 @@ import re
 import shutil
 import subprocess
 import sys
+import unicodedata
 from collections import Counter
 from pathlib import Path
 
@@ -35,7 +36,7 @@ SCRIPT_JS = Path(ROOT, "script.js")
 # --- importa as funcoes puras de main.py sem puxar mysql/fastapi ---
 _MAIN_PY = Path(__file__).resolve().parent.parent.joinpath("Backend", "main.py")
 _src = _MAIN_PY.read_text(encoding="utf-8")
-_ns = {"re": re, "Counter": Counter, "fitz": fitz}
+_ns = {"re": re, "Counter": Counter, "fitz": fitz, "unicodedata": unicodedata}
 
 
 def _extract_fn(src, name):
@@ -49,7 +50,7 @@ def _extract_fn(src, name):
     return "\n".join(body)
 
 
-for _fn in ("limpar_texto_pdf", "_detectar_cabecalho_rodape",
+for _fn in ("normalizar_diacriticos", "limpar_texto_pdf", "_detectar_cabecalho_rodape",
             "_parece_titulo", "dividir_em_frases", "extrair_blocos_pdf",
             "ordenar_blocos", "reconstruir_estrutura_pdf",
             "_detectar_margens_blocos", "_ordenar_linhas_colunas",
@@ -58,6 +59,7 @@ for _fn in ("limpar_texto_pdf", "_detectar_cabecalho_rodape",
             "filtrar_estrutura_para_leitura"):
     exec(_extract_fn(_src, _fn), _ns)
 
+normalizar_diacriticos = _ns["normalizar_diacriticos"]
 limpar_texto_pdf = _ns["limpar_texto_pdf"]
 dividir_em_frases = _ns["dividir_em_frases"]
 extrair_blocos_pdf = _ns["extrair_blocos_pdf"]
@@ -769,3 +771,31 @@ def test_tema_claro_tem_alternancia_persistente_e_estilos_de_leitura():
     # An explicit choice persists; without one the editorial theme follows the system.
     assert "const savedTheme = localStorage.getItem(THEME_STORAGE_KEY)" in script
     assert "systemTheme.addEventListener('change'" in script
+
+def test_normalizar_diacriticos_casos_comuns():
+    """Verifica reconstrução correta de acentos destacados comuns em PDFs."""
+    assert normalizar_diacriticos("contribuiço~es") == "contribuições"
+    assert normalizar_diacriticos("na~o") == "não"
+    assert normalizar_diacriticos("situaç~ao") == "situação"
+    assert normalizar_diacriticos("tambe´m") == "também"
+    assert normalizar_diacriticos("e´") == "é"
+    assert normalizar_diacriticos("voce^") == "você"
+    assert normalizar_diacriticos("tre^s") == "três"
+    assert normalizar_diacriticos("^enfase") == "ênfase"
+    assert normalizar_diacriticos("a`") == "à"
+    assert normalizar_diacriticos("c¸a") == "ça"
+    assert normalizar_diacriticos("atenc,a~o") == "atenção"
+    assert normalizar_diacriticos("CONTRIBUIÇO~ES") == "CONTRIBUIÇÕES"
+    # Preserva fórmulas e notações
+    assert normalizar_diacriticos("x^2 + y^2 = r^2") == "x^2 + y^2 = r^2"
+    assert normalizar_diacriticos("~ 50%") == "~ 50%"
+
+
+def test_dividir_em_frases_normaliza_diacriticos():
+    """Garante que dividir_em_frases aplica normalização de diacríticos."""
+    texto = "As contribuiço~es na~o foram pequenas. Tambe´m voce^ devera´ participar."
+    frases = dividir_em_frases(texto)
+    assert frases == [
+        "As contribuições não foram pequenas.",
+        "Também você deverá participar."
+    ]

@@ -3,6 +3,7 @@ import json
 import queue
 import re
 import threading
+import unicodedata
 from typing import Any
 
 import uvicorn
@@ -78,6 +79,66 @@ async def _read_and_validate_pdf(file: UploadFile) -> bytes:
     return contents
 
 
+def normalizar_diacriticos(texto: str) -> str:
+    """Normaliza texto corrigindo diacríticos/acentos destacados ou decompostos comuns em PDFs.
+
+    Exemplos comuns gerados por CMaps/fontes de PDF:
+      - 'contribuiço~es' -> 'contribuições'
+      - 'na~o' -> 'não'
+      - 'tambe´m' -> 'também'
+      - 'e´' -> 'é'
+      - 'voce^' -> 'você'
+      - 'a`' -> 'à'
+      - 'c¸' -> 'ç'
+    """
+    if not texto:
+        return ""
+
+    # 1. Normaliza formas decompostas padrão do Unicode (NFD -> NFC)
+    t = unicodedata.normalize("NFC", str(texto))
+
+    # 2. Cedilha (¸, U+00B8, U+02CD) e c,
+    t = re.sub(r'([cC])[¸¸ˍ]', lambda m: 'Ç' if m.group(1).isupper() else 'ç', t)
+    t = re.sub(r'[¸¸ˍ]([cC])', lambda m: 'Ç' if m.group(1).isupper() else 'ç', t)
+    t = re.sub(r'([a-zA-ZÀ-ÿ])c,([a-zA-ZÀ-ÿ])', r'\1ç\2', t)
+
+    # 3. Tildes soltos (~, ˜, U+02DC)
+    t = re.sub(r'([aA])[~˜˜]', lambda m: 'Ã' if m.group(1).isupper() else 'ã', t)
+    t = re.sub(r'([oO])[~˜˜]', lambda m: 'Õ' if m.group(1).isupper() else 'õ', t)
+    t = re.sub(r'([nN])[~˜˜]', lambda m: 'Ñ' if m.group(1).isupper() else 'ñ', t)
+    t = re.sub(r'[~˜˜]([aA])', lambda m: 'Ã' if m.group(1).isupper() else 'ã', t)
+    t = re.sub(r'[~˜˜]([oO])', lambda m: 'Õ' if m.group(1).isupper() else 'õ', t)
+    t = re.sub(r'[~˜˜]([nN])', lambda m: 'Ñ' if m.group(1).isupper() else 'ñ', t)
+
+    # 4. Acentos agudos (´, U+00B4, U+02CA)
+    agudos = {
+        'a': 'á', 'A': 'Á', 'e': 'é', 'E': 'É', 'i': 'í', 'I': 'Í',
+        'o': 'ó', 'O': 'Ó', 'u': 'ú', 'U': 'Ú'
+    }
+    t = re.sub(r'([aeiouAEIOU])[´´ˊ]', lambda m: agudos[m.group(1)], t)
+    t = re.sub(r'[´´ˊ]([aeiouAEIOU])', lambda m: agudos[m.group(1)], t)
+
+    # 5. Circunflexos (^, ˆ, U+02C6)
+    circunflexos = {
+        'a': 'â', 'A': 'Â', 'e': 'ê', 'E': 'Ê', 'i': 'î', 'I': 'Î',
+        'o': 'ô', 'O': 'Ô', 'u': 'û', 'U': 'Û'
+    }
+    t = re.sub(r'([aeiouAEIOU])[ˆˆ]', lambda m: circunflexos[m.group(1)], t)
+    t = re.sub(r'[ˆˆ]([aeiouAEIOU])', lambda m: circunflexos[m.group(1)], t)
+    t = re.sub(r'([aeiouAEIOU])\^(?=[a-zA-ZÀ-ÿ\s.,;:!?)]|$)', lambda m: circunflexos[m.group(1)], t)
+    t = re.sub(r'(^|\s)\^([aeiouAEIOU])(?=[a-zA-ZÀ-ÿ])', lambda m: m.group(1) + circunflexos[m.group(2)], t)
+
+    # 6. Crase / Grave (` , U+0060, U+02CB)
+    t = re.sub(r'([aA])[``ˋ]', lambda m: 'À' if m.group(1).isupper() else 'à', t)
+    t = re.sub(r'[``ˋ]([aA])', lambda m: 'À' if m.group(1).isupper() else 'à', t)
+
+    # 7. Trema (¨, U+00A8)
+    t = re.sub(r'([uU])[¨¨]', lambda m: 'Ü' if m.group(1).isupper() else 'ü', t)
+    t = re.sub(r'[¨¨]([uU])', lambda m: 'Ü' if m.group(1).isupper() else 'ü', t)
+
+    return unicodedata.normalize("NFC", t)
+
+
 def extrair_blocos_pdf(caminho_pdf, progress_callback=None):
     """Extrai spans de texto e suas posições e características tipográficas."""
     if fitz is None:
@@ -100,7 +161,7 @@ def extrair_blocos_pdf(caminho_pdf, progress_callback=None):
                     continue
                 for numero_linha, linha in enumerate(bloco.get("lines", [])):
                     for span in linha.get("spans", []):
-                        texto = span.get("text", "")
+                        texto = normalizar_diacriticos(span.get("text", ""))
                         if not texto.strip():
                             continue
                         x0, y0, x1, y1 = span["bbox"]
@@ -267,7 +328,7 @@ def reconstruir_estrutura_pdf(blocos):
     tamanhos = sorted(paragrafo["_tamanho"] for paragrafo in paragrafos)
     tamanho_base = tamanhos[(len(tamanhos) - 1) // 2] if tamanhos else 0
     for paragrafo in paragrafos:
-        paragrafo["texto"] = re.sub(r"[ \t]+", " ", paragrafo["texto"]).strip()
+        paragrafo["texto"] = normalizar_diacriticos(re.sub(r"[ \t]+", " ", paragrafo["texto"]).strip())
         if paragrafo["texto"].endswith("-"):
             paragrafo["texto"] = paragrafo["texto"][:-1]
         paragrafo["tipo"] = (
@@ -407,7 +468,7 @@ def _texto_da_linha(spans):
                 texto += " "
         texto += parte
         ultimo = span
-    return texto.strip()
+    return normalizar_diacriticos(texto.strip())
 
 
 def _span_negrito(span):
@@ -421,7 +482,7 @@ def _trechos_da_linha(spans):
     for span in spans:
         fonte = span.get("fonte", "")
         flags = span.get("flags", 0)
-        texto = span["texto"]
+        texto = normalizar_diacriticos(span["texto"])
         if ultimo and not ultimo["texto"][-1:].isspace() and not texto[:1].isspace():
             if span["x"] - ultimo["x1"] > max(1, (span.get("tamanho", 10) or 10) * 0.15):
                 texto = " " + texto
@@ -460,6 +521,7 @@ def limpar_texto_pdf(texto, paginas=None):
     """
     if not texto:
         return ""
+    texto = normalizar_diacriticos(texto)
 
     repetidas = set()
     if paginas:
@@ -597,6 +659,7 @@ def dividir_em_frases(texto):
     """
     if not texto:
         return []
+    texto = normalizar_diacriticos(texto)
 
     # Sentinelas impedem que separadores numéricos e reticências virem cortes.
     SENT = '\x00'

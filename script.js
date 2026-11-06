@@ -717,9 +717,56 @@ function loadTXT(file) {
 // Camada de normalização linguística (conservadora).
 // Não converte números cegamente: só ajusta o que o TTS costuma ler mal.
 // =====================================================================
+// Normaliza acentos e diacríticos destacados ou decompostos comuns em PDFs e OCR
+function normalizarDiacriticos(texto) {
+    if (!texto) return '';
+    let t = String(texto).normalize('NFC');
+
+    // 1. Cedilha (¸, U+00B8, U+02CD) e c,
+    t = t.replace(/([cC])[¸¸ˍ]/g, (_, c) => c === c.toUpperCase() ? 'Ç' : 'ç');
+    t = t.replace(/[¸¸ˍ]([cC])/g, (_, c) => c === c.toUpperCase() ? 'Ç' : 'ç');
+    t = t.replace(/([a-zA-ZÀ-ÿ])c,([a-zA-ZÀ-ÿ])/g, '$1ç$2');
+
+    // 2. Tildes soltos (~, ˜, U+02DC)
+    t = t.replace(/([aA])[~˜˜]/g, (_, v) => v === v.toUpperCase() ? 'Ã' : 'ã');
+    t = t.replace(/([oO])[~˜˜]/g, (_, v) => v === v.toUpperCase() ? 'Õ' : 'õ');
+    t = t.replace(/([nN])[~˜˜]/g, (_, v) => v === v.toUpperCase() ? 'Ñ' : 'ñ');
+    t = t.replace(/[~˜˜]([aA])/g, (_, v) => v === v.toUpperCase() ? 'Ã' : 'ã');
+    t = t.replace(/[~˜˜]([oO])/g, (_, v) => v === v.toUpperCase() ? 'Õ' : 'õ');
+    t = t.replace(/[~˜˜]([nN])/g, (_, v) => v === v.toUpperCase() ? 'Ñ' : 'ñ');
+
+    // 3. Acentos agudos (´, U+00B4, U+02CA)
+    const agudos = {
+        a: 'á', A: 'Á', e: 'é', E: 'É', i: 'í', I: 'Í',
+        o: 'ó', O: 'Ó', u: 'ú', U: 'Ú'
+    };
+    t = t.replace(/([aeiouAEIOU])[´´ˊ]/g, (_, v) => agudos[v]);
+    t = t.replace(/[´´ˊ]([aeiouAEIOU])/g, (_, v) => agudos[v]);
+
+    // 4. Circunflexos (^, ˆ, U+02C6)
+    const circunflexos = {
+        a: 'â', A: 'Â', e: 'ê', E: 'Ê', i: 'î', I: 'Î',
+        o: 'ô', O: 'Ô', u: 'û', U: 'Û'
+    };
+    t = t.replace(/([aeiouAEIOU])[ˆˆ]/g, (_, v) => circunflexos[v]);
+    t = t.replace(/[ˆˆ]([aeiouAEIOU])/g, (_, v) => circunflexos[v]);
+    t = t.replace(/([aeiouAEIOU])\^(?=[a-zA-ZÀ-ÿ\s.,;:!?)]|$)/g, (_, v) => circunflexos[v]);
+    t = t.replace(/(^|\s)\^([aeiouAEIOU])(?=[a-zA-ZÀ-ÿ])/g, (_, pre, v) => pre + circunflexos[v]);
+
+    // 5. Crase / Grave (` , U+0060, U+02CB)
+    t = t.replace(/([aA])[``ˋ]/g, (_, v) => v === v.toUpperCase() ? 'À' : 'à');
+    t = t.replace(/[``ˋ]([aA])/g, (_, v) => v === v.toUpperCase() ? 'À' : 'à');
+
+    // 6. Trema (¨, U+00A8)
+    t = t.replace(/([uU])[¨¨]/g, (_, v) => v === v.toUpperCase() ? 'Ü' : 'ü');
+    t = t.replace(/[¨¨]([uU])/g, (_, v) => v === v.toUpperCase() ? 'Ü' : 'ü');
+
+    return t.normalize('NFC');
+}
+
 function normalizeText(text) {
     if (!text) return '';
-    let t = text;
+    let t = normalizarDiacriticos(text);
 
     // Valores monetários: R$ 1.250,50 -> "mil duzentos e cinquenta reais e cinquenta centavos"
     t = t.replace(/R\$\s*([\d.]+)(?:,(\d{2}))?/g, (m, intPart, cents) => {
@@ -853,12 +900,25 @@ function processText(text, title, sentences, blocks = null, documentId = null) {
 
     // O backend (PDF) já envia as frases filtradas. O TXT é dividido aqui.
     // Filtra apenas trechos vazios/curtos demais (ex.: "Ele parou." continua).
+    text = normalizarDiacriticos(text);
     const base = sentences && Array.isArray(sentences)
-        ? sentences.map(s => String(s || '').trim()).filter(Boolean)
+        ? sentences.map(s => normalizarDiacriticos(String(s || '').trim())).filter(Boolean)
         : splitIntoSentences(text);
 
     state.sentences = base;
     state.structured = Array.isArray(blocks);
+    if (Array.isArray(blocks)) {
+        blocks.forEach(b => {
+            if (Array.isArray(b.segmentos)) {
+                b.segmentos.forEach(s => {
+                    if (s.texto) s.texto = normalizarDiacriticos(s.texto);
+                    if (Array.isArray(s.trechos)) {
+                        s.trechos.forEach(tr => { if (tr.texto) tr.texto = normalizarDiacriticos(tr.texto); });
+                    }
+                });
+            }
+        });
+    }
     state.blocks = state.structured ? blocks : [];
     if (!state.structured && !Array.isArray(sentences)) {
         let index = 0;
