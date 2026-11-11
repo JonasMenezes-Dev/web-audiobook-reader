@@ -9,6 +9,7 @@ Cobre as regras que definimos:
 Uso:  python -m pytest tests/test_pipeline.py -v
 """
 import base64
+import hashlib
 import io
 import json
 import os
@@ -40,7 +41,7 @@ SCRIPT_JS = Path(ROOT, "script.js")
 _MAIN_PY = Path(__file__).resolve().parent.parent.joinpath("Backend", "main.py")
 _src = _MAIN_PY.read_text(encoding="utf-8")
 _ns = {"re": re, "Counter": Counter, "fitz": fitz, "unicodedata": unicodedata,
-       "io": io, "base64": base64, "Image": Image}
+       "io": io, "base64": base64, "Image": Image, "hashlib": hashlib}
 
 
 def _extract_fn(src, name):
