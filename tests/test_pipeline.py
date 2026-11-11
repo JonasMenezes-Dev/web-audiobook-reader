@@ -8,14 +8,18 @@ Cobre as regras que definimos:
 
 Uso:  python -m pytest tests/test_pipeline.py -v
 """
+import base64
+import io
 import json
 import os
 import re
 import shutil
 import subprocess
 import sys
+import unicodedata
 from collections import Counter
 from pathlib import Path
+from PIL import Image
 
 import pymupdf as fitz
 import pytest
@@ -35,7 +39,8 @@ SCRIPT_JS = Path(ROOT, "script.js")
 # --- importa as funcoes puras de main.py sem puxar mysql/fastapi ---
 _MAIN_PY = Path(__file__).resolve().parent.parent.joinpath("Backend", "main.py")
 _src = _MAIN_PY.read_text(encoding="utf-8")
-_ns = {"re": re, "Counter": Counter, "fitz": fitz}
+_ns = {"re": re, "Counter": Counter, "fitz": fitz, "unicodedata": unicodedata,
+       "io": io, "base64": base64, "Image": Image}
 
 
 def _extract_fn(src, name):
@@ -49,21 +54,26 @@ def _extract_fn(src, name):
     return "\n".join(body)
 
 
-for _fn in ("limpar_texto_pdf", "_detectar_cabecalho_rodape",
+for _fn in ("normalizar_diacriticos", "limpar_texto_pdf", "_detectar_cabecalho_rodape",
             "_parece_titulo", "dividir_em_frases", "extrair_blocos_pdf",
             "ordenar_blocos", "reconstruir_estrutura_pdf",
             "_detectar_margens_blocos", "_ordenar_linhas_colunas",
             "_texto_da_linha", "_span_negrito", "_trechos_da_linha",
             "classificar_conteudo", "_contextos_estrutura_para_leitura",
-            "filtrar_estrutura_para_leitura"):
+            "filtrar_estrutura_para_leitura", "otimizar_imagem_para_leitor",
+            "extrair_imagens_pdf", "intercalar_imagens_blocos"):
     exec(_extract_fn(_src, _fn), _ns)
 
+normalizar_diacriticos = _ns["normalizar_diacriticos"]
 limpar_texto_pdf = _ns["limpar_texto_pdf"]
 dividir_em_frases = _ns["dividir_em_frases"]
 extrair_blocos_pdf = _ns["extrair_blocos_pdf"]
 reconstruir_estrutura_pdf = _ns["reconstruir_estrutura_pdf"]
 classificar_conteudo = _ns["classificar_conteudo"]
 filtrar_estrutura_para_leitura = _ns["filtrar_estrutura_para_leitura"]
+otimizar_imagem_para_leitor = _ns["otimizar_imagem_para_leitor"]
+extrair_imagens_pdf = _ns["extrair_imagens_pdf"]
+intercalar_imagens_blocos = _ns["intercalar_imagens_blocos"]
 
 SPLITTER_CASES = [
     (
@@ -769,3 +779,64 @@ def test_tema_claro_tem_alternancia_persistente_e_estilos_de_leitura():
     # An explicit choice persists; without one the editorial theme follows the system.
     assert "const savedTheme = localStorage.getItem(THEME_STORAGE_KEY)" in script
     assert "systemTheme.addEventListener('change'" in script
+
+def test_normalizar_diacriticos_casos_comuns():
+    """Verifica reconstrução correta de acentos destacados comuns em PDFs."""
+    assert normalizar_diacriticos("contribuiço~es") == "contribuições"
+    assert normalizar_diacriticos("na~o") == "não"
+    assert normalizar_diacriticos("situaç~ao") == "situação"
+    assert normalizar_diacriticos("tambe´m") == "também"
+    assert normalizar_diacriticos("e´") == "é"
+    assert normalizar_diacriticos("voce^") == "você"
+    assert normalizar_diacriticos("tre^s") == "três"
+    assert normalizar_diacriticos("^enfase") == "ênfase"
+    assert normalizar_diacriticos("a`") == "à"
+    assert normalizar_diacriticos("c¸a") == "ça"
+    assert normalizar_diacriticos("atenc,a~o") == "atenção"
+    assert normalizar_diacriticos("CONTRIBUIÇO~ES") == "CONTRIBUIÇÕES"
+    # Preserva fórmulas e notações
+    assert normalizar_diacriticos("x^2 + y^2 = r^2") == "x^2 + y^2 = r^2"
+    assert normalizar_diacriticos("~ 50%") == "~ 50%"
+
+
+def test_dividir_em_frases_normaliza_diacriticos():
+    """Garante que dividir_em_frases aplica normalização de diacríticos."""
+    texto = "As contribuiço~es na~o foram pequenas. Tambe´m voce^ devera´ participar."
+    frases = dividir_em_frases(texto)
+    assert frases == [
+        "As contribuições não foram pequenas.",
+        "Também você deverá participar."
+    ]
+
+
+def test_extracao_e_intercalacao_de_imagens_no_pdf():
+    """Garante que imagens do PDF são extraídas e intercaladas nos blocos de leitura."""
+    doc = fitz.open()
+    page = doc.new_page()
+    page.insert_text((50, 50), "Parágrafo antes da figura.")
+
+    # Gera imagem válida (120x100)
+    img = Image.new("RGB", (120, 100), color="blue")
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    page.insert_image(fitz.Rect(50, 120, 250, 300), stream=buf.getvalue())
+
+    page.insert_text((50, 350), "Parágrafo depois da figura.")
+    pdf_bytes = doc.tobytes()
+    doc.close()
+
+    imagens = extrair_imagens_pdf(pdf_bytes)
+    assert len(imagens) == 1
+    assert imagens[0]["imagem"].startswith("data:image/")
+    assert imagens[0]["largura"] > 0 and imagens[0]["altura"] > 0
+
+    mock_blocos = [
+        {"id": "b0", "tipo": "paragrafo", "pagina": 0, "y": 50.0, "segmentos": [{"texto": "Antes", "indice_frase": 0}]},
+        {"id": "b1", "tipo": "paragrafo", "pagina": 0, "y": 350.0, "segmentos": [{"texto": "Depois", "indice_frase": 1}]},
+    ]
+    intercalados = intercalar_imagens_blocos(mock_blocos, pdf_bytes)
+    assert len(intercalados) == 3
+    assert intercalados[0]["id"] == "b0"
+    assert intercalados[1]["tipo"] == "imagem"
+    assert intercalados[1]["imagem"].startswith("data:image/")
+    assert intercalados[2]["id"] == "b1"

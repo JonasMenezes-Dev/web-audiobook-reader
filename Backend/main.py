@@ -1,9 +1,13 @@
 import asyncio
+import base64
+import io
 import json
 import queue
 import re
 import threading
+import unicodedata
 from typing import Any
+from PIL import Image
 
 import uvicorn
 from fastapi import FastAPI, File, HTTPException, UploadFile
@@ -78,6 +82,66 @@ async def _read_and_validate_pdf(file: UploadFile) -> bytes:
     return contents
 
 
+def normalizar_diacriticos(texto: str) -> str:
+    """Normaliza texto corrigindo diacríticos/acentos destacados ou decompostos comuns em PDFs.
+
+    Exemplos comuns gerados por CMaps/fontes de PDF:
+      - 'contribuiço~es' -> 'contribuições'
+      - 'na~o' -> 'não'
+      - 'tambe´m' -> 'também'
+      - 'e´' -> 'é'
+      - 'voce^' -> 'você'
+      - 'a`' -> 'à'
+      - 'c¸' -> 'ç'
+    """
+    if not texto:
+        return ""
+
+    # 1. Normaliza formas decompostas padrão do Unicode (NFD -> NFC)
+    t = unicodedata.normalize("NFC", str(texto))
+
+    # 2. Cedilha (¸, U+00B8, U+02CD) e c,
+    t = re.sub(r'([cC])[¸¸ˍ]', lambda m: 'Ç' if m.group(1).isupper() else 'ç', t)
+    t = re.sub(r'[¸¸ˍ]([cC])', lambda m: 'Ç' if m.group(1).isupper() else 'ç', t)
+    t = re.sub(r'([a-zA-ZÀ-ÿ])c,([a-zA-ZÀ-ÿ])', r'\1ç\2', t)
+
+    # 3. Tildes soltos (~, ˜, U+02DC)
+    t = re.sub(r'([aA])[~˜˜]', lambda m: 'Ã' if m.group(1).isupper() else 'ã', t)
+    t = re.sub(r'([oO])[~˜˜]', lambda m: 'Õ' if m.group(1).isupper() else 'õ', t)
+    t = re.sub(r'([nN])[~˜˜]', lambda m: 'Ñ' if m.group(1).isupper() else 'ñ', t)
+    t = re.sub(r'[~˜˜]([aA])', lambda m: 'Ã' if m.group(1).isupper() else 'ã', t)
+    t = re.sub(r'[~˜˜]([oO])', lambda m: 'Õ' if m.group(1).isupper() else 'õ', t)
+    t = re.sub(r'[~˜˜]([nN])', lambda m: 'Ñ' if m.group(1).isupper() else 'ñ', t)
+
+    # 4. Acentos agudos (´, U+00B4, U+02CA)
+    agudos = {
+        'a': 'á', 'A': 'Á', 'e': 'é', 'E': 'É', 'i': 'í', 'I': 'Í',
+        'o': 'ó', 'O': 'Ó', 'u': 'ú', 'U': 'Ú'
+    }
+    t = re.sub(r'([aeiouAEIOU])[´´ˊ]', lambda m: agudos[m.group(1)], t)
+    t = re.sub(r'[´´ˊ]([aeiouAEIOU])', lambda m: agudos[m.group(1)], t)
+
+    # 5. Circunflexos (^, ˆ, U+02C6)
+    circunflexos = {
+        'a': 'â', 'A': 'Â', 'e': 'ê', 'E': 'Ê', 'i': 'î', 'I': 'Î',
+        'o': 'ô', 'O': 'Ô', 'u': 'û', 'U': 'Û'
+    }
+    t = re.sub(r'([aeiouAEIOU])[ˆˆ]', lambda m: circunflexos[m.group(1)], t)
+    t = re.sub(r'[ˆˆ]([aeiouAEIOU])', lambda m: circunflexos[m.group(1)], t)
+    t = re.sub(r'([aeiouAEIOU])\^(?=[a-zA-ZÀ-ÿ\s.,;:!?)]|$)', lambda m: circunflexos[m.group(1)], t)
+    t = re.sub(r'(^|\s)\^([aeiouAEIOU])(?=[a-zA-ZÀ-ÿ])', lambda m: m.group(1) + circunflexos[m.group(2)], t)
+
+    # 6. Crase / Grave (` , U+0060, U+02CB)
+    t = re.sub(r'([aA])[``ˋ]', lambda m: 'À' if m.group(1).isupper() else 'à', t)
+    t = re.sub(r'[``ˋ]([aA])', lambda m: 'À' if m.group(1).isupper() else 'à', t)
+
+    # 7. Trema (¨, U+00A8)
+    t = re.sub(r'([uU])[¨¨]', lambda m: 'Ü' if m.group(1).isupper() else 'ü', t)
+    t = re.sub(r'[¨¨]([uU])', lambda m: 'Ü' if m.group(1).isupper() else 'ü', t)
+
+    return unicodedata.normalize("NFC", t)
+
+
 def extrair_blocos_pdf(caminho_pdf, progress_callback=None):
     """Extrai spans de texto e suas posições e características tipográficas."""
     if fitz is None:
@@ -100,7 +164,7 @@ def extrair_blocos_pdf(caminho_pdf, progress_callback=None):
                     continue
                 for numero_linha, linha in enumerate(bloco.get("lines", [])):
                     for span in linha.get("spans", []):
-                        texto = span.get("text", "")
+                        texto = normalizar_diacriticos(span.get("text", ""))
                         if not texto.strip():
                             continue
                         x0, y0, x1, y1 = span["bbox"]
@@ -267,7 +331,7 @@ def reconstruir_estrutura_pdf(blocos):
     tamanhos = sorted(paragrafo["_tamanho"] for paragrafo in paragrafos)
     tamanho_base = tamanhos[(len(tamanhos) - 1) // 2] if tamanhos else 0
     for paragrafo in paragrafos:
-        paragrafo["texto"] = re.sub(r"[ \t]+", " ", paragrafo["texto"]).strip()
+        paragrafo["texto"] = normalizar_diacriticos(re.sub(r"[ \t]+", " ", paragrafo["texto"]).strip())
         if paragrafo["texto"].endswith("-"):
             paragrafo["texto"] = paragrafo["texto"][:-1]
         paragrafo["tipo"] = (
@@ -407,7 +471,7 @@ def _texto_da_linha(spans):
                 texto += " "
         texto += parte
         ultimo = span
-    return texto.strip()
+    return normalizar_diacriticos(texto.strip())
 
 
 def _span_negrito(span):
@@ -421,7 +485,7 @@ def _trechos_da_linha(spans):
     for span in spans:
         fonte = span.get("fonte", "")
         flags = span.get("flags", 0)
-        texto = span["texto"]
+        texto = normalizar_diacriticos(span["texto"])
         if ultimo and not ultimo["texto"][-1:].isspace() and not texto[:1].isspace():
             if span["x"] - ultimo["x1"] > max(1, (span.get("tamanho", 10) or 10) * 0.15):
                 texto = " " + texto
@@ -460,6 +524,7 @@ def limpar_texto_pdf(texto, paginas=None):
     """
     if not texto:
         return ""
+    texto = normalizar_diacriticos(texto)
 
     repetidas = set()
     if paginas:
@@ -597,6 +662,7 @@ def dividir_em_frases(texto):
     """
     if not texto:
         return []
+    texto = normalizar_diacriticos(texto)
 
     # Sentinelas impedem que separadores numéricos e reticências virem cortes.
     SENT = '\x00'
@@ -940,7 +1006,9 @@ def filtrar_estrutura_para_leitura(estrutura):
             nivel = min(3, numero.group(1).count('.') + 1) if numero else 1
             blocos_leitura.append({
                 "id": f"bloco-{indice}", "tipo": elemento.get("tipo", "paragrafo"),
-                "nivel": nivel, "pagina": elemento.get("pagina"), "segmentos": segmentos,
+                "nivel": nivel, "pagina": elemento.get("pagina"),
+                "y": elemento.get("y", 0),
+                "segmentos": segmentos,
             })
 
     return {
@@ -949,6 +1017,141 @@ def filtrar_estrutura_para_leitura(estrutura):
         "classificacoes": classificacoes,
         "blocos_leitura": blocos_leitura,
     }
+
+
+def otimizar_imagem_para_leitor(imagem_bytes, largura_max=1000):
+    """Converte e otimiza bytes de imagem para data URI leve (JPEG ou WebP)."""
+    if not imagem_bytes:
+        return None, 0, 0
+    try:
+        img = Image.open(io.BytesIO(imagem_bytes))
+        w, h = img.size
+        # Filtro de dimensões mínimas para descartar ícones e separadores
+        if w < 60 or h < 60:
+            return None, 0, 0
+        if w > largura_max:
+            novo_h = max(1, int((largura_max / w) * h))
+            img = img.resize((largura_max, novo_h), Image.Resampling.LANCZOS)
+            w, h = img.size
+        buf = io.BytesIO()
+        if img.mode in ("RGBA", "LA", "P"):
+            img.save(buf, format="WEBP", quality=80)
+            mime = "image/webp"
+        else:
+            if img.mode != "RGB":
+                img = img.convert("RGB")
+            img.save(buf, format="JPEG", quality=82, optimize=True)
+            mime = "image/jpeg"
+        b64 = base64.b64encode(buf.getvalue()).decode("ascii")
+        return f"data:{mime};base64,{b64}", w, h
+    except Exception:
+        try:
+            if fitz is None:
+                return None, 0, 0
+            pix = fitz.Pixmap(imagem_bytes)
+            if pix.width < 60 or pix.height < 60:
+                return None, 0, 0
+            if pix.colorspace.n >= 4:
+                pix = fitz.Pixmap(fitz.csRGB, pix)
+            png_bytes = pix.tobytes("png")
+            return otimizar_imagem_para_leitor(png_bytes, largura_max=largura_max)
+        except Exception:
+            return None, 0, 0
+
+
+def extrair_imagens_pdf(caminho_pdf):
+    """Extrai blocos de imagem válidos das páginas do PDF com suas posições relativas."""
+    if fitz is None:
+        return []
+
+    if isinstance(caminho_pdf, (bytes, bytearray)):
+        documento = fitz.open(stream=caminho_pdf, filetype="pdf")
+    else:
+        documento = fitz.open(caminho_pdf)
+
+    imagens = []
+    hashes_vistos = Counter()
+    try:
+        candidatos = []
+        for numero_pagina, pagina in enumerate(documento):
+            dados = pagina.get_text("dict")
+            altura_pag = pagina.rect.height or 842
+            for bloco in dados.get("blocks", []):
+                if bloco.get("type") != 1:
+                    continue
+                imagem_bytes = bloco.get("image")
+                if not imagem_bytes:
+                    continue
+                x0, y0, x1, y1 = bloco.get("bbox", (0, 0, 0, 0))
+                largura_bbox = x1 - x0
+                altura_bbox = y1 - y0
+                if largura_bbox < 40 or altura_bbox < 40:
+                    continue
+                if y0 < altura_pag * 0.05 or y1 > altura_pag * 0.95:
+                    continue
+                h = hash(imagem_bytes[:512] + imagem_bytes[-512:])
+                hashes_vistos[h] += 1
+                candidatos.append({
+                    "pagina": numero_pagina,
+                    "x": x0,
+                    "y": y0,
+                    "x1": x1,
+                    "y1": y1,
+                    "hash": h,
+                    "bytes": imagem_bytes,
+                })
+
+        for cand in candidatos:
+            if hashes_vistos[cand["hash"]] >= 3:
+                continue
+            uri, w, h = otimizar_imagem_para_leitor(cand["bytes"])
+            if not uri:
+                continue
+            imagens.append({
+                "pagina": cand["pagina"],
+                "x": cand["x"],
+                "y": cand["y"],
+                "x1": cand["x1"],
+                "y1": cand["y1"],
+                "largura": w,
+                "altura": h,
+                "imagem": uri,
+            })
+    finally:
+        documento.close()
+    return imagens
+
+
+def intercalar_imagens_blocos(blocos_leitura, caminho_pdf):
+    """Intercala blocos de imagem nos blocos de leitura na ordem da página."""
+    if not blocos_leitura:
+        return blocos_leitura
+    try:
+        imagens = extrair_imagens_pdf(caminho_pdf)
+    except Exception:
+        return blocos_leitura
+    if not imagens:
+        return blocos_leitura
+
+    blocos_imagem = []
+    for idx, img in enumerate(imagens):
+        blocos_imagem.append({
+            "id": f"bloco-img-{img['pagina']}-{idx}",
+            "tipo": "imagem",
+            "pagina": img["pagina"],
+            "y": img["y"],
+            "largura": img["largura"],
+            "altura": img["altura"],
+            "imagem": img["imagem"],
+            "segmentos": [],
+        })
+
+    todos = list(blocos_leitura) + blocos_imagem
+    todos.sort(key=lambda b: (
+        b.get("pagina", 0) if b.get("pagina") is not None else 0,
+        round(b.get("y", 0), 1)
+    ))
+    return todos
 
 
 @app.get("/")
@@ -968,6 +1171,7 @@ def _processar_pdf_completo(contents, filename, progress_callback=None, stage_ca
         stage_callback("filtering")
     resultado_leitura = filtrar_estrutura_para_leitura(estrutura)
     sentences = resultado_leitura["frases_filtradas"]
+    blocos_leitura = intercalar_imagens_blocos(resultado_leitura["blocos_leitura"], contents)
     return {
         "filename": filename,
         "total_frases": len(sentences),
@@ -977,7 +1181,7 @@ def _processar_pdf_completo(contents, filename, progress_callback=None, stage_ca
         "sentences_original": resultado_leitura["frases_originais"],
         "classificacoes_conteudo": resultado_leitura["classificacoes"],
         "estrutura": estrutura,
-        "blocos_leitura": resultado_leitura["blocos_leitura"],
+        "blocos_leitura": blocos_leitura,
         "versao_estrutura": 1,
     }
 

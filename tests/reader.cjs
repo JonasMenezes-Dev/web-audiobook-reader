@@ -546,3 +546,34 @@ test('pocket mode activates OLED black overlay, starts narration and exits via d
 
     await page.close();
 });
+
+test('normalizes separated diacritics in loaded text and TTS sentences', async () => {
+    const page = await browser.newPage();
+    await page.route('https://fonts.googleapis.com/**', route => route.abort());
+    await page.route('https://fonts.gstatic.com/**', route => route.abort());
+    await page.addInitScript(() => {
+        speechSynthesis.speak = () => {};
+        speechSynthesis.cancel = () => {};
+    });
+    await page.goto(url);
+    const content = 'As contribuiço~es na~o foram pequenas. Tambe´m voce^ devera´ participar.';
+    await page.locator('#file-input').setInputFiles({
+        name: 'Acentos.txt',
+        mimeType: 'text/plain',
+        buffer: Buffer.from(content)
+    });
+    await page.locator('#reading-area').waitFor({ state: 'visible' });
+
+    const sentences = await page.evaluate(() => state.sentences);
+    assert.deepEqual(sentences, [
+        'As contribuições não foram pequenas.',
+        'Também você deverá participar.'
+    ]);
+
+    const rendered = await page.locator('.sent').allInnerTexts();
+    assert.deepEqual(rendered, [
+        'As contribuições não foram pequenas.',
+        'Também você deverá participar.'
+    ]);
+    await page.close();
+});

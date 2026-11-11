@@ -617,6 +617,30 @@ button:focus-visible, [role="button"]:focus-visible, .prog-track:focus-visible {
 .reading-inner h3 { font-size: 1.2em; }
 .reading-inner h4 { font-size: 1.08em; }
 .reading-inner > .reader-block:first-child { margin-top: 0; }
+.reader-image {
+    margin: 2em auto;
+    text-align: center;
+    max-width: 100%;
+}
+.reader-image img {
+    max-width: 100%;
+    height: auto;
+    display: inline-block;
+    border-radius: 8px;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);
+    background: var(--reader-paper, #fcfbf9);
+}
+[data-theme="dark"] .reader-image img {
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
+    filter: brightness(0.92);
+}
+.reader-image figcaption {
+    font-family: var(--font-ui, sans-serif);
+    font-size: 0.85em;
+    color: var(--reader-muted, #7c7267);
+    margin-top: 0.6em;
+    line-height: 1.4;
+}
 .reference-text { font-size: 0.9em; overflow-wrap: anywhere; }
 .source-page { flex-shrink: 0; font: 400 11px var(--font-ui); color: var(--reader-muted); margin-left: auto; }
 .playback-status { flex-shrink: 0; margin: 0; padding: 6px 16px; background: var(--reader-paper); color: var(--reader-muted); font: 400 11px/1.4 var(--font-ui); }
