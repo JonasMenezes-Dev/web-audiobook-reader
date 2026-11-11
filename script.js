@@ -936,9 +936,13 @@ function processText(text, title, sentences, blocks = null, documentId = null) {
             segmentos: base.map((value, index) => ({ texto: value, indice_frase: index, trechos: [] })) }];
     }
     state.sentenceBlocks = [];
-    state.blocks.forEach(block => block.segmentos.forEach(segment => {
-        if (Number.isInteger(segment.indice_frase)) state.sentenceBlocks[segment.indice_frase] = block;
-    }));
+    state.blocks.forEach(block => {
+        if (Array.isArray(block.segmentos)) {
+            block.segmentos.forEach(segment => {
+                if (Number.isInteger(segment.indice_frase)) state.sentenceBlocks[segment.indice_frase] = block;
+            });
+        }
+    });
 
     if (state.sentences.length === 0) {
         alert('Não foi possível identificar frases no arquivo.');
@@ -1068,32 +1072,56 @@ function renderText() {
     lastHighlightedIndex = -1;
 
     state.blocks.forEach(block => {
+        if (block.tipo === 'imagem' && block.imagem) {
+            const figure = document.createElement('figure');
+            figure.className = 'reader-block reader-image';
+            if (block.id) figure.id = block.id;
+            figure.tabIndex = -1;
+            const img = document.createElement('img');
+            img.src = block.imagem;
+            img.alt = block.alt || 'Ilustração do documento';
+            img.loading = 'lazy';
+            if (block.largura && block.altura) {
+                img.style.aspectRatio = `${block.largura} / ${block.altura}`;
+            }
+            figure.appendChild(img);
+            if (block.legenda) {
+                const figcaption = document.createElement('figcaption');
+                figcaption.textContent = block.legenda;
+                figure.appendChild(figcaption);
+            }
+            fragment.appendChild(figure);
+            return;
+        }
+
         const tag = block.tipo === 'titulo' ? `h${Math.min(4, (block.nivel || 1) + 1)}` : 'p';
         const element = document.createElement(tag);
         element.className = 'reader-block';
         element.id = block.id;
         element.tabIndex = -1;
-        block.segmentos.forEach((segment, position) => {
-            if (position) element.appendChild(document.createTextNode(' '));
-            const span = document.createElement('span');
-            if (Number.isInteger(segment.indice_frase)) {
-                span.className = 'sent';
-                span.id = `s-${segment.indice_frase}`;
-                sentenceElements[segment.indice_frase] = span;
-            } else span.className = 'reference-text';
-            if (segment.trechos?.length && segment.trechos.map(t => t.texto).join('') === segment.texto) {
-                segment.trechos.forEach(trecho => {
-                    let part = document.createTextNode(trecho.texto);
-                    if (trecho.italico) { const em = document.createElement('em'); em.appendChild(part); part = em; }
-                    if (trecho.negrito) { const strong = document.createElement('strong'); strong.appendChild(part); part = strong; }
-                    span.appendChild(part);
-                });
-            } else {
-                const sentence = segment.texto;
-                span.textContent = sentence;
-            }
-            element.appendChild(span);
-        });
+        if (Array.isArray(block.segmentos)) {
+            block.segmentos.forEach((segment, position) => {
+                if (position) element.appendChild(document.createTextNode(' '));
+                const span = document.createElement('span');
+                if (Number.isInteger(segment.indice_frase)) {
+                    span.className = 'sent';
+                    span.id = `s-${segment.indice_frase}`;
+                    sentenceElements[segment.indice_frase] = span;
+                } else span.className = 'reference-text';
+                if (segment.trechos?.length && segment.trechos.map(t => t.texto).join('') === segment.texto) {
+                    segment.trechos.forEach(trecho => {
+                        let part = document.createTextNode(trecho.texto);
+                        if (trecho.italico) { const em = document.createElement('em'); em.appendChild(part); part = em; }
+                        if (trecho.negrito) { const strong = document.createElement('strong'); strong.appendChild(part); part = strong; }
+                        span.appendChild(part);
+                    });
+                } else {
+                    const sentence = segment.texto;
+                    span.textContent = sentence;
+                }
+                element.appendChild(span);
+            });
+        }
         fragment.appendChild(element);
     });
     container.replaceChildren(fragment);
@@ -1585,7 +1613,7 @@ document.getElementById('prog-track').addEventListener('keydown', event => {
 document.getElementById('reading-area').addEventListener('keydown', event => {
     if (!event.altKey || !['ArrowUp', 'ArrowDown'].includes(event.key)) return;
     const current = state.sentenceBlocks[state.currentIdx];
-    const blocks = state.blocks.filter(block => block.segmentos.some(s => Number.isInteger(s.indice_frase)));
+    const blocks = state.blocks.filter(block => Array.isArray(block.segmentos) && block.segmentos.some(s => Number.isInteger(s.indice_frase)));
     const index = blocks.indexOf(current) + (event.key === 'ArrowDown' ? 1 : -1);
     const target = blocks[Math.max(0, Math.min(blocks.length - 1, index))];
     if (!target) return;

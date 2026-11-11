@@ -286,3 +286,25 @@ test('background progress save does not duplicate speech or lose word position',
     await p.locator('#btn-play').click();assert.match(await p.evaluate(()=>window.testUtterance.text),/^suficientemente/);
     await p.close();
 });
+test('renders image blocks in reading flow with figure and lazy img without breaking sentence indices', async () => {
+    const p = await page();
+    const data = {
+        filename: 'livro-com-figura.pdf',
+        sentences: ['Parágrafo anterior.', 'Parágrafo posterior.'],
+        blocos_leitura: [
+            { id: 'b0', tipo: 'paragrafo', pagina: 0, segmentos: [{ texto: 'Parágrafo anterior.', indice_frase: 0 }] },
+            { id: 'b-img', tipo: 'imagem', pagina: 0, largura: 400, altura: 300, imagem: 'data:image/svg+xml;utf8,<svg></svg>' },
+            { id: 'b1', tipo: 'paragrafo', pagina: 0, segmentos: [{ texto: 'Parágrafo posterior.', indice_frase: 1 }] }
+        ]
+    };
+    await p.route('**/upload-pdf-progress/**', r => r.fulfill({ contentType: 'application/x-ndjson', body: JSON.stringify({ type: 'result', data }) + '\n' }));
+    await p.locator('#file-input').setInputFiles({ name: 'livro-com-figura.pdf', mimeType: 'application/pdf', buffer: Buffer.from('%PDF-sintetico') });
+    await p.locator('#reading-area').waitFor({ state: 'visible' });
+
+    assert.equal(await p.locator('.reader-image img').count(), 1);
+    assert.equal(await p.locator('.reader-image img').getAttribute('src'), 'data:image/svg+xml;utf8,<svg></svg>');
+    assert.equal(await p.locator('.sent').count(), 2);
+    assert.equal(await p.locator('#s-0').innerText(), 'Parágrafo anterior.');
+    assert.equal(await p.locator('#s-1').innerText(), 'Parágrafo posterior.');
+    await p.close();
+});
