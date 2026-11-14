@@ -7,13 +7,21 @@ import queue
 import re
 import threading
 import unicodedata
+from collections import Counter
 from typing import Any
-from PIL import Image
 
 import uvicorn
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
+
+# Importação opcional do Pillow para redimensionamento/compressão de imagens.
+Image: Any
+try:
+    from PIL import Image as _PILImage
+    Image = _PILImage
+except ImportError:
+    Image = None
 
 # Importação opcional do PyMuPDF, único extrator usado pelo backend.
 fitz: Any
@@ -552,7 +560,6 @@ def limpar_texto_pdf(texto, paginas=None):
 
     # Fallback por frequência: só quando não recebemos as páginas separadas.
     if not paginas:
-        from collections import Counter
         contagem = Counter(txt for txt in resultado if txt)
         total_linhas = sum(1 for txt in resultado if txt)
         # Um cabeçalho/rodapé se repete uma vez por página. Estimando ~20 linhas
@@ -628,7 +635,6 @@ def _detectar_cabecalho_rodape(paginas):
         return set()
 
     MARGEM = 3  # quantas linhas do topo e da base considerar
-    from collections import Counter
 
     contagem = Counter()
     paginas_validas = 0
@@ -1021,11 +1027,12 @@ def filtrar_estrutura_para_leitura(estrutura):
 
 
 def otimizar_imagem_para_leitor(imagem_bytes, largura_max=1000):
-    """Converte e otimiza bytes de imagem para data URI leve (JPEG ou WebP)."""
+    """Converte e otimiza bytes de imagem para data URI leve (JPEG, WebP ou PNG)."""
     if not imagem_bytes:
         return None, 0, 0
-    try:
-        img = Image.open(io.BytesIO(imagem_bytes))
+
+    def _codificar_pil(raw_bytes):
+        img = Image.open(io.BytesIO(raw_bytes))
         w, h = img.size
         # Filtro de dimensões mínimas para descartar ícones e separadores
         if w < 30 or h < 30:
@@ -1045,19 +1052,31 @@ def otimizar_imagem_para_leitor(imagem_bytes, largura_max=1000):
             mime = "image/jpeg"
         b64 = base64.b64encode(buf.getvalue()).decode("ascii")
         return f"data:{mime};base64,{b64}", w, h
-    except Exception:
+
+    if Image is not None:
         try:
-            if fitz is None:
-                return None, 0, 0
-            pix = fitz.Pixmap(imagem_bytes)
-            if pix.width < 30 or pix.height < 30:
-                return None, 0, 0
-            if pix.colorspace.n >= 4:
-                pix = fitz.Pixmap(fitz.csRGB, pix)
-            png_bytes = pix.tobytes("png")
-            return otimizar_imagem_para_leitor(png_bytes, largura_max=largura_max)
+            return _codificar_pil(imagem_bytes)
         except Exception:
+            pass
+
+    if fitz is None:
+        return None, 0, 0
+    try:
+        pix = fitz.Pixmap(imagem_bytes)
+        if pix.width < 30 or pix.height < 30:
             return None, 0, 0
+        if pix.colorspace and pix.colorspace.n >= 4:
+            pix = fitz.Pixmap(fitz.csRGB, pix)
+        png_bytes = pix.tobytes("png")
+        if Image is not None:
+            try:
+                return _codificar_pil(png_bytes)
+            except Exception:
+                pass
+        b64 = base64.b64encode(png_bytes).decode("ascii")
+        return f"data:image/png;base64,{b64}", pix.width, pix.height
+    except Exception:
+        return None, 0, 0
 
 
 def extrair_imagens_pdf(caminho_pdf):
@@ -1108,8 +1127,12 @@ def extrair_imagens_pdf(caminho_pdf):
 
             # 2. Complementa com get_images(full=True) para capturar XObjects em formulários/grupos
             try:
-                for img_info in pagina.get_images(full=True):
+                infos = pagina.get_images(full=True)
+                smasks = {info[1] for info in infos if len(info) > 1 and info[1] > 0}
+                for img_info in infos:
                     xref = img_info[0]
+                    if xref in smasks:
+                        continue
                     rects = pagina.get_image_rects(xref)
                     if not rects:
                         continue
