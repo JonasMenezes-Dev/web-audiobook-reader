@@ -37,6 +37,14 @@ function toggleTheme() {
     }
 }
 
+function syncSystemTheme() {
+    if (hasSavedTheme) return;
+    const expected = systemTheme.matches ? 'dark' : 'light';
+    if (document.body.dataset.theme !== expected) {
+        applyTheme(expected);
+    }
+}
+
 try {
     const savedTheme = localStorage.getItem(THEME_STORAGE_KEY);
     hasSavedTheme = savedTheme === 'light' || savedTheme === 'dark';
@@ -44,9 +52,8 @@ try {
 } catch (_) {
     applyTheme(systemTheme.matches ? 'dark' : 'light');
 }
-systemTheme.addEventListener('change', () => {
-    if (!hasSavedTheme) applyTheme(systemTheme.matches ? 'dark' : 'light');
-});
+systemTheme.addEventListener('change', syncSystemTheme);
+window.addEventListener('resize', syncSystemTheme, { passive: true });
 
 // Em produção, substitua pela URL pública do backend hospedado.
 // O endereço local continua como padrão para desenvolvimento no PC.
@@ -600,7 +607,7 @@ function loadPDF(file) {
                 const data = event.data;
                 const sentences = Array.isArray(data?.sentences) ? data.sentences :
                     Array.isArray(data?.blocos_leitura) ? data.blocos_leitura.flatMap(block =>
-                        block.segmentos.filter(segment => Number.isInteger(segment.indice_frase)).map(segment => segment.texto)) : [];
+                        (block.segmentos || []).filter(segment => Number.isInteger(segment.indice_frase)).map(segment => segment.texto)) : [];
                 if (!data || !sentences.length) {
                     throw new Error('O servidor não retornou frases utilizáveis.');
                 }
@@ -1080,7 +1087,7 @@ function renderText() {
             const img = document.createElement('img');
             img.src = block.imagem;
             img.alt = block.alt || 'Ilustração do documento';
-            img.loading = 'lazy';
+            img.decoding = 'async';
             if (block.largura && block.altura) {
                 img.style.aspectRatio = `${block.largura} / ${block.altura}`;
             }
@@ -1176,6 +1183,7 @@ function scrollToActive(behavior = 'smooth') {
 
 
 function highlight(scroll = true, instant = false) {
+    syncSystemTheme();
     sentenceElements[lastHighlightedIndex]?.classList.remove('reading');
     const from = Math.max(0, Math.min(lastHighlightedIndex, state.currentIdx));
     const to = Math.min(sentenceElements.length, Math.max(lastHighlightedIndex, state.currentIdx));

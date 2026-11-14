@@ -1,5 +1,6 @@
 """Testes HTTP do backend para a validação completa do upload de PDFs."""
 
+import io
 import json
 import sys
 from pathlib import Path
@@ -7,6 +8,7 @@ from pathlib import Path
 import pymupdf as fitz
 import pytest
 from fastapi.testclient import TestClient
+from PIL import Image
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "Backend"))
@@ -109,3 +111,31 @@ def test_upload_rejeita_pdf_protegido_por_senha():
     response = upload("/upload-pdf/", conteudo)
     assert response.status_code == 400
     assert "senha" in response.json()["detail"].casefold()
+
+
+def test_upload_pdf_progress_retorna_blocos_de_imagem():
+    doc = fitz.open()
+    page = doc.new_page()
+    page.insert_text((50, 50), "Parágrafo antes da figura.")
+
+    img = Image.new("RGB", (160, 120), color="teal")
+    buf = io.BytesIO()
+    img.save(buf, format="JPEG")
+    page.insert_image(fitz.Rect(50, 120, 210, 240), stream=buf.getvalue())
+
+    page.insert_text((50, 320), "Parágrafo depois da figura.")
+    conteudo = doc.tobytes()
+    doc.close()
+
+    response = upload("/upload-pdf-progress/?compact=true", conteudo, filename="com_imagem.pdf")
+    assert response.status_code == 200, response.text
+    eventos = [json.loads(line) for line in response.text.splitlines() if line.strip()]
+    resultado = next(evento["data"] for evento in eventos if evento["type"] == "result")
+
+    blocos = resultado["blocos_leitura"]
+    tipos = [b["tipo"] for b in blocos]
+    assert tipos == ["paragrafo", "imagem", "paragrafo"]
+    assert blocos[1]["imagem"].startswith("data:image/")
+    assert blocos[1]["largura"] == 160
+    assert blocos[1]["altura"] == 120
+    assert blocos[1]["segmentos"] == []

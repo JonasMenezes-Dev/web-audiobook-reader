@@ -1,18 +1,27 @@
 import asyncio
 import base64
+import hashlib
 import io
 import json
 import queue
 import re
 import threading
 import unicodedata
+from collections import Counter
 from typing import Any
-from PIL import Image
 
 import uvicorn
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
+
+# Importação opcional do Pillow para redimensionamento/compressão de imagens.
+Image: Any
+try:
+    from PIL import Image as _PILImage
+    Image = _PILImage
+except ImportError:
+    Image = None
 
 # Importação opcional do PyMuPDF, único extrator usado pelo backend.
 fitz: Any
@@ -551,7 +560,6 @@ def limpar_texto_pdf(texto, paginas=None):
 
     # Fallback por frequência: só quando não recebemos as páginas separadas.
     if not paginas:
-        from collections import Counter
         contagem = Counter(txt for txt in resultado if txt)
         total_linhas = sum(1 for txt in resultado if txt)
         # Um cabeçalho/rodapé se repete uma vez por página. Estimando ~20 linhas
@@ -627,7 +635,6 @@ def _detectar_cabecalho_rodape(paginas):
         return set()
 
     MARGEM = 3  # quantas linhas do topo e da base considerar
-    from collections import Counter
 
     contagem = Counter()
     paginas_validas = 0
@@ -1020,14 +1027,15 @@ def filtrar_estrutura_para_leitura(estrutura):
 
 
 def otimizar_imagem_para_leitor(imagem_bytes, largura_max=1000):
-    """Converte e otimiza bytes de imagem para data URI leve (JPEG ou WebP)."""
+    """Converte e otimiza bytes de imagem para data URI leve (JPEG, WebP ou PNG)."""
     if not imagem_bytes:
         return None, 0, 0
-    try:
-        img = Image.open(io.BytesIO(imagem_bytes))
+
+    def _codificar_pil(raw_bytes):
+        img = Image.open(io.BytesIO(raw_bytes))
         w, h = img.size
         # Filtro de dimensões mínimas para descartar ícones e separadores
-        if w < 60 or h < 60:
+        if w < 30 or h < 30:
             return None, 0, 0
         if w > largura_max:
             novo_h = max(1, int((largura_max / w) * h))
@@ -1044,23 +1052,35 @@ def otimizar_imagem_para_leitor(imagem_bytes, largura_max=1000):
             mime = "image/jpeg"
         b64 = base64.b64encode(buf.getvalue()).decode("ascii")
         return f"data:{mime};base64,{b64}", w, h
-    except Exception:
+
+    if Image is not None:
         try:
-            if fitz is None:
-                return None, 0, 0
-            pix = fitz.Pixmap(imagem_bytes)
-            if pix.width < 60 or pix.height < 60:
-                return None, 0, 0
-            if pix.colorspace.n >= 4:
-                pix = fitz.Pixmap(fitz.csRGB, pix)
-            png_bytes = pix.tobytes("png")
-            return otimizar_imagem_para_leitor(png_bytes, largura_max=largura_max)
+            return _codificar_pil(imagem_bytes)
         except Exception:
+            pass
+
+    if fitz is None:
+        return None, 0, 0
+    try:
+        pix = fitz.Pixmap(imagem_bytes)
+        if pix.width < 30 or pix.height < 30:
             return None, 0, 0
+        if pix.colorspace and pix.colorspace.n >= 4:
+            pix = fitz.Pixmap(fitz.csRGB, pix)
+        png_bytes = pix.tobytes("png")
+        if Image is not None:
+            try:
+                return _codificar_pil(png_bytes)
+            except Exception:
+                pass
+        b64 = base64.b64encode(png_bytes).decode("ascii")
+        return f"data:image/png;base64,{b64}", pix.width, pix.height
+    except Exception:
+        return None, 0, 0
 
 
 def extrair_imagens_pdf(caminho_pdf):
-    """Extrai blocos de imagem válidos das páginas do PDF com suas posições relativas."""
+    """Extrai blocos de imagem válidos das páginas do PDF combinando get_text e get_images."""
     if fitz is None:
         return []
 
@@ -1071,11 +1091,15 @@ def extrair_imagens_pdf(caminho_pdf):
 
     imagens = []
     hashes_vistos = Counter()
+    total_paginas = len(documento)
+
     try:
         candidatos = []
         for numero_pagina, pagina in enumerate(documento):
+            bboxes_pagina = []
+
+            # 1. Tenta extrair blocos de imagem pelo display list da página
             dados = pagina.get_text("dict")
-            altura_pag = pagina.rect.height or 842
             for bloco in dados.get("blocks", []):
                 if bloco.get("type") != 1:
                     continue
@@ -1085,24 +1109,84 @@ def extrair_imagens_pdf(caminho_pdf):
                 x0, y0, x1, y1 = bloco.get("bbox", (0, 0, 0, 0))
                 largura_bbox = x1 - x0
                 altura_bbox = y1 - y0
-                if largura_bbox < 40 or altura_bbox < 40:
+                if largura_bbox < 25 or altura_bbox < 25:
                     continue
-                if y0 < altura_pag * 0.05 or y1 > altura_pag * 0.95:
-                    continue
-                h = hash(imagem_bytes[:512] + imagem_bytes[-512:])
-                hashes_vistos[h] += 1
+
+                md5 = hashlib.md5(imagem_bytes).hexdigest()
+                hashes_vistos[md5] += 1
+                bboxes_pagina.append((x0, y0, x1, y1))
                 candidatos.append({
                     "pagina": numero_pagina,
                     "x": x0,
                     "y": y0,
                     "x1": x1,
                     "y1": y1,
-                    "hash": h,
+                    "hash": md5,
                     "bytes": imagem_bytes,
                 })
 
+            # 2. Complementa com get_images(full=True) para capturar XObjects em formulários/grupos
+            try:
+                infos = pagina.get_images(full=True)
+                smasks = {info[1] for info in infos if len(info) > 1 and info[1] > 0}
+                for img_info in infos:
+                    xref = img_info[0]
+                    if xref in smasks:
+                        continue
+                    rects = pagina.get_image_rects(xref)
+                    if not rects:
+                        continue
+                    for r in rects:
+                        x0, y0, x1, y1 = r.x0, r.y0, r.x1, r.y1
+                        largura_bbox = x1 - x0
+                        altura_bbox = y1 - y0
+                        if largura_bbox < 25 or altura_bbox < 25:
+                            continue
+
+                        ja_capturado = any(
+                            abs(x0 - bx0) < 5 and abs(y0 - by0) < 5
+                            for bx0, by0, bx1, by1 in bboxes_pagina
+                        )
+                        if ja_capturado:
+                            continue
+
+                        try:
+                            extracted = documento.extract_image(xref)
+                            img_bytes = extracted.get("image")
+                        except Exception:
+                            img_bytes = None
+
+                        if not img_bytes:
+                            try:
+                                pix = fitz.Pixmap(documento, xref)
+                                if pix.colorspace.n >= 4:
+                                    pix = fitz.Pixmap(fitz.csRGB, pix)
+                                img_bytes = pix.tobytes("png")
+                            except Exception:
+                                img_bytes = None
+
+                        if not img_bytes:
+                            continue
+
+                        md5 = hashlib.md5(img_bytes).hexdigest()
+                        hashes_vistos[md5] += 1
+                        bboxes_pagina.append((x0, y0, x1, y1))
+                        candidatos.append({
+                            "pagina": numero_pagina,
+                            "x": x0,
+                            "y": y0,
+                            "x1": x1,
+                            "y1": y1,
+                            "hash": md5,
+                            "bytes": img_bytes,
+                        })
+            except Exception:
+                pass
+
+        # Filtra imagens repetidas (marcas d'água / logos presentes em 5 ou mais páginas)
+        limite_repeticao = max(5, int(total_paginas * 0.6)) if total_paginas >= 5 else 999
         for cand in candidatos:
-            if hashes_vistos[cand["hash"]] >= 3:
+            if hashes_vistos[cand["hash"]] >= limite_repeticao:
                 continue
             uri, w, h = otimizar_imagem_para_leitor(cand["bytes"])
             if not uri:
